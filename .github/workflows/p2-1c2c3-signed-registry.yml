@@ -1,0 +1,100 @@
+name: P2.1c.2c.3 Signed Registry Integration Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'contracts/p2_1c2b/**'
+      - 'contracts/p2_1c2c/**'
+      - 'contracts/p2_1c2c3/**'
+      - 'database/**'
+      - '.github/workflows/p2-1c2c3-signed-registry.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'contracts/p2_1c2b/**'
+      - 'contracts/p2_1c2c/**'
+      - 'contracts/p2_1c2c3/**'
+      - 'database/**'
+      - '.github/workflows/p2-1c2c3-signed-registry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-registry-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_session_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_session_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pinned verifier dependencies and PostgreSQL client
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2b1/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2c3
+          python --version | tee verification/p2_1c2c3/python.txt
+          node --version | tee verification/p2_1c2c3/node.txt
+          psql -X -Atc 'select version();' | tee verification/p2_1c2c3/postgres.txt
+
+      - name: Existing signed-token verifier regression
+        run: |
+          set -euo pipefail
+          python -m py_compile             backend/p2_1c2b1/identity_boundary.py             backend/p2_1c2c3/verified_credential_bridge.py
+          python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/p2_1c2c3/verifier-regression.txt
+
+      - name: Existing command and durable-session regressions
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2b/command_boundary.test.mjs 2>&1 | tee verification/p2_1c2c3/command-regression.txt
+          node --test contracts/p2_1c2c/session_boundary.test.mjs 2>&1 | tee verification/p2_1c2c3/session-unit-regression.txt
+          node --test contracts/p2_1c2c/postgres_mapping.test.mjs 2>&1 | tee verification/p2_1c2c3/session-postgres-regression.txt
+          grep -q 'CLEAN_ISOLATED_IDENTITY_DATABASE' verification/p2_1c2c3/session-postgres-regression.txt
+
+      - name: Real signed-token to PostgreSQL integration
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2c3/signed_registry_postgres.test.mjs 2>&1 | tee verification/p2_1c2c3/signed-registry.txt
+          grep -q 'CLEAN_SIGNED_REGISTRY_DATABASE' verification/p2_1c2c3/signed-registry.txt
+
+      - name: Retain runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2c3-signed-registry-evidence
+          path: verification/p2_1c2c3/
+          if-no-files-found: warn
