@@ -161,6 +161,10 @@ class RuntimeRoleTests(unittest.TestCase):
             self.assertTrue(self.admin_scalar("SELECT has_table_privilege(%s,%s,'SELECT')", (GUARD,table)))
             for privilege in ('INSERT','UPDATE','DELETE','TRUNCATE'):
                 self.assertFalse(self.admin_scalar('SELECT has_table_privilege(%s,%s,%s)', (GUARD,table,privilege)))
+        self.assertTrue(self.admin_scalar("SELECT has_column_privilege(%s,'echo_identity.principals','principal_id','UPDATE')", (GUARD,)))
+        self.assertTrue(self.admin_scalar("SELECT has_column_privilege(%s,'echo_identity.sessions','session_key','UPDATE')", (GUARD,)))
+        self.assertFalse(self.admin_scalar("SELECT has_column_privilege(%s,'echo_identity.principals','writer_enabled','UPDATE')", (GUARD,)))
+        self.assertFalse(self.admin_scalar("SELECT has_column_privilege(%s,'echo_identity.sessions','revoked','UPDATE')", (GUARD,)))
         for privilege in ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE'):
             self.assertFalse(self.admin_scalar('SELECT has_table_privilege(%s,%s,%s)',
                 (GUARD,'echo_core.voice_revisions',privilege)))
@@ -173,7 +177,7 @@ class RuntimeRoleTests(unittest.TestCase):
 
     def test_05_runtime_can_invoke_wrapper_for_valid_current_private_draft_authority(self):
         with self.runtime_connection() as c:
-            self.assertEqual(c.execute(CALL, self.values()).fetchone()[0], None)
+            self.assertEqual(c.execute(CALL, self.values()).fetchone(), ('',))
 
     def test_06_runtime_cannot_read_authority_tables(self):
         self.runtime_error('SELECT * FROM echo_identity.principals')
@@ -275,7 +279,9 @@ class RuntimeRoleTests(unittest.TestCase):
     def test_19_wrapper_does_not_return_a_reusable_authorization_ticket(self):
         with self.runtime_connection() as c:
             row = c.execute(CALL,self.values()).fetchone()
-            self.assertEqual(row,(None,))
+            self.assertEqual(row,('',))
+            self.assertNotIn(self.stamp['session_key'], row[0])
+            self.assertNotIn(str(self.stamp['actor_id']), row[0])
 
     def test_20_runtime_has_no_predefined_all_data_role_membership(self):
         count = self.admin_scalar("""SELECT count(*) FROM pg_auth_members m
