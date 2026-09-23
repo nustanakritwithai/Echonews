@@ -123,4 +123,6 @@ class PostgresRegistryAdapter:
             tokens_valid_from=(issued_ms + 999) // 1000,
             source_id=source_id,
             authorization_expires_at=expires_ms // 1000,
+            principal_id=principal_id,
+            session_key=key,
         )

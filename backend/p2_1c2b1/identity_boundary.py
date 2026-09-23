@@ -1,4 +1,4 @@
-"""Echo P2.1c.2b.1 / P2.1c.2c.3: signed-token identity preflight.
+"""Echo P2.1c.2b.1 / P2.1c.2c.3 / P2.1c.2d.2b signed identity boundary.
 
 NOT an HTTP server, OIDC provider, DB writer or object-level authorization grant.
 The only untrusted entrypoint is Boundary.bind(authorization, raw_body).
@@ -20,11 +20,13 @@ from uuid import UUID
 import jwt
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
-POLICY_VERSION = "echo-identity-preflight-v0.2"
+POLICY_VERSION = "echo-identity-preflight-v0.3"
 CAPABILITIES = frozenset({"voice:draft:create", "assessment:review"})
 ACTOR_KINDS = frozenset({"HUMAN", "AI", "SYSTEM", "TEST_FIXTURE", "UNKNOWN"})
 TOKEN_LIMIT = 8192
 BODY_LIMIT = 16384
+_MAX_SAFE_MS = 9007199254740991
+_SESSION_KEY = re.compile(r"^[a-f0-9]{64}$")
 
 
 class BoundaryError(Exception):
@@ -92,13 +94,19 @@ def _text(value: object, maximum: int) -> str:
     return value
 
 
+def _milliseconds(seconds: int) -> int:
+    if type(seconds) is not int or seconds < 0 or seconds > _MAX_SAFE_MS // 1000:
+        raise ValueError("NumericDate cannot be represented safely in milliseconds")
+    return seconds * 1000
+
+
 @dataclass(frozen=True)
 class ActorBinding:
     """Trusted registry result; never deserialize this dataclass from a request.
 
-    For the durable-registry path source_id is server-owned, and
-    authorization_expires_at is the registry/session upper bound in Unix seconds.
-    Legacy fixture adapters may omit those two optional fields.
+    Durable-registry fields principal_id/source_id/session_key are server-owned and
+    must be supplied as one complete tuple. Legacy fixture adapters may omit all of
+    them; such adapters can preflight but cannot mint a DB authorization stamp.
     """
 
     issuer: str
@@ -111,6 +119,8 @@ class ActorBinding:
     tokens_valid_from: int = 0
     source_id: UUID | None = None
     authorization_expires_at: int | None = None
+    principal_id: UUID | None = None
+    session_key: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -153,6 +163,36 @@ class ReviewIntent:
 
 
 @dataclass(frozen=True)
+class AuthorizationStamp:
+    """Server-owned authorization context for a later same-transaction DB fence.
+
+    This object is not a bearer token and never proves authorization by itself. The
+    database MUST recheck current authority/session state before any guarded write.
+    """
+
+    issuer: str = field(repr=False)
+    subject: str = field(repr=False)
+    session_key: str = field(repr=False)
+    principal_id: UUID
+    actor_id: UUID
+    source_id: UUID
+    auth_version: int
+    capability: str
+    token_issued_ms: int
+    token_not_before_ms: int
+    token_expires_ms: int
+    key_set_version: str
+    policy_version: str = POLICY_VERSION
+
+    def private_draft_fence_args(self) -> tuple[object, ...]:
+        if self.capability != "voice:draft:create":
+            raise ValueError("stamp is not valid for the private draft fence")
+        return (self.issuer, self.subject, self.session_key, self.principal_id,
+                self.actor_id, self.source_id, self.auth_version, self.capability,
+                self.token_issued_ms, self.token_not_before_ms, self.token_expires_ms)
+
+
+@dataclass(frozen=True)
 class BoundIntent:
     """In-process preflight only. This is NOT an authorization bearer artifact."""
 
@@ -166,6 +206,7 @@ class BoundIntent:
     key_set_version: str
     payload: DraftIntent | ReviewIntent
     source_id: UUID | None = None
+    authorization_stamp: AuthorizationStamp | None = field(default=None, repr=False)
     policy_version: str = POLICY_VERSION
 
     @property
@@ -232,6 +273,7 @@ class Boundary:
             for key in ("iat", "nbf", "exp"):
                 if type(claims[key]) is not int or not 0 <= claims[key] < 2**53:
                     raise ValueError("integral NumericDate required")
+                _milliseconds(claims[key])
             if not (claims["iat"] <= claims["nbf"] < claims["exp"]
                     and 0 < claims["exp"] - claims["iat"] <= self._config.max_lifetime_seconds):
                 raise ValueError("invalid validity window")
@@ -251,6 +293,9 @@ class Boundary:
             raise BoundaryError("IDENTITY_BACKEND_UNAVAILABLE") from None
         if binding is None or type(binding) is not ActorBinding:
             raise BoundaryError("IDENTITY_REJECTED")
+        durable = (binding.source_id, binding.principal_id, binding.session_key)
+        if any(value is not None for value in durable) and not all(value is not None for value in durable):
+            raise BoundaryError("IDENTITY_REJECTED")
         if (binding.issuer != self._config.issuer or binding.subject != claims["sub"]
                 or type(binding.actor_id) is not UUID or binding.actor_id.int == 0
                 or type(binding.actor_kind) is not str or binding.actor_kind not in ACTOR_KINDS
@@ -261,6 +306,11 @@ class Boundary:
                 or not binding.capabilities <= CAPABILITIES
                 or (binding.source_id is not None
                     and (type(binding.source_id) is not UUID or binding.source_id.int == 0))
+                or (binding.principal_id is not None
+                    and (type(binding.principal_id) is not UUID or binding.principal_id.int == 0))
+                or (binding.session_key is not None
+                    and (type(binding.session_key) is not str
+                         or _SESSION_KEY.fullmatch(binding.session_key) is None))
                 or (binding.authorization_expires_at is not None
                     and (type(binding.authorization_expires_at) is not int
                          or binding.authorization_expires_at <= 0))
@@ -309,8 +359,23 @@ class Boundary:
             raise BoundaryError("CAPABILITY_REQUIRED")
         if command == "REVIEW_EVIDENCE_RELATION" and binding.actor_kind != "HUMAN":
             raise BoundaryError("HUMAN_REVIEW_REQUIRED")
+
+        stamp = None
+        if (binding.source_id is not None and binding.principal_id is not None
+                and binding.session_key is not None):
+            stamp = AuthorizationStamp(
+                issuer=binding.issuer, subject=binding.subject,
+                session_key=binding.session_key, principal_id=binding.principal_id,
+                actor_id=binding.actor_id, source_id=binding.source_id,
+                auth_version=binding.revision, capability=capability,
+                token_issued_ms=_milliseconds(claims["iat"]),
+                token_not_before_ms=_milliseconds(claims["nbf"]),
+                token_expires_ms=_milliseconds(claims["exp"]),
+                key_set_version=self._config.key_set_version,
+            )
         return BoundIntent(request_id=request_id, command=command,
                            actor_id=binding.actor_id, actor_kind=binding.actor_kind,
                            binding_revision=binding.revision, issued_at=claims["iat"],
                            expires_at=effective_exp, key_set_version=self._config.key_set_version,
-                           payload=parsed, source_id=binding.source_id)
+                           payload=parsed, source_id=binding.source_id,
+                           authorization_stamp=stamp)
