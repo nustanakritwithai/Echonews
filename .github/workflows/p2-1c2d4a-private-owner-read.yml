@@ -1,0 +1,84 @@
+name: P2.1c.2d.4a PRIVATE Owner Read Gate
+on:
+  push:
+    branches: [main]
+    paths: ['database/p2_1c2d4a/**', '.github/workflows/p2-1c2d4a-private-owner-read.yml']
+  pull_request:
+    paths: ['database/p2_1c2d4a/**', '.github/workflows/p2-1c2d4a-private-owner-read.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  private-owner-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_private_owner_read_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_private_owner_read_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_private_owner_read_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture versions
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4a
+          git rev-parse HEAD | tee verification/p2_1c2d4a/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4a/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4a/postgres.txt
+          sha256sum database/p2_1c2d4a/001_private_owner_read.sql \
+            database/p2_1c2d4a/test_private_owner_read.py \
+            database/p2_1c2d4a/README_TH.md | tee verification/p2_1c2d4a/source-sha256.txt
+      - name: Preserve public-read regression
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2a/tests_postgres.sql 2>&1 | tee verification/p2_1c2d4a/public-read-regression.txt
+          grep -q 'P2.1C2A PUBLIC VOICE READ SUITE FINISHED' verification/p2_1c2d4a/public-read-regression.txt
+          grep -q 'CLEAN_ROLLBACK' verification/p2_1c2d4a/public-read-regression.txt
+          ! grep -q 'ROLLBACK_LEFT_OBJECTS' verification/p2_1c2d4a/public-read-regression.txt
+      - name: Preserve payload-recovery regression on isolated database
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_payload_recovery_test;'
+          PGDATABASE=echo_payload_recovery_test python backend/p2_1c2d3d/test_recoverable_private_voice_executor.py 2>&1 | tee verification/p2_1c2d4a/payload-recovery-regression.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d4a/payload-recovery-regression.txt
+          grep -q '^OK$' verification/p2_1c2d4a/payload-recovery-regression.txt
+          grep -q 'P2_1C2D3D_PAYLOAD_RECOVERY_SUITE_SAT' verification/p2_1c2d4a/payload-recovery-regression.txt
+          grep -q 'CLEAN_PAYLOAD_RECOVERY_DATABASE' verification/p2_1c2d4a/payload-recovery-regression.txt
+      - name: PRIVATE owner read integration
+        run: |
+          set -euo pipefail
+          python -m py_compile database/p2_1c2d4a/test_private_owner_read.py
+          python database/p2_1c2d4a/test_private_owner_read.py 2>&1 | tee verification/p2_1c2d4a/private-owner-read.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d4a/private-owner-read.txt
+          grep -q '^OK$' verification/p2_1c2d4a/private-owner-read.txt
+          grep -q 'P2_1C2D4A_PRIVATE_OWNER_READ_SUITE_SAT' verification/p2_1c2d4a/private-owner-read.txt
+          grep -q 'CLEAN_PRIVATE_OWNER_READ_DATABASE' verification/p2_1c2d4a/private-owner-read.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4a-private-owner-read-evidence
+          path: verification/p2_1c2d4a/
+          if-no-files-found: warn
