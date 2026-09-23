@@ -1,0 +1,87 @@
+name: P2.1c.2d.2b Server-Owned Authorization Stamp
+on:
+  pull_request:
+    paths:
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'backend/p2_1c2d2b/**'
+      - 'database/p2_1c2c/**'
+      - 'database/p2_1c2d1/**'
+      - 'database/p2_1c2d2/**'
+      - '.github/workflows/p2-1c2d2b-server-stamp.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'backend/p2_1c2d2b/**'
+      - 'database/p2_1c2c/**'
+      - 'database/p2_1c2d1/**'
+      - 'database/p2_1c2d2/**'
+      - '.github/workflows/p2-1c2d2b-server-stamp.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server-stamp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_server_stamp_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_server_stamp_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_server_stamp_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install direct test dependencies
+        run: python -m pip install -r backend/p2_1c2c3/requirements.txt
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+      - name: Apply isolated dependency chain
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1b/schema.sql
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2c/001_identity_registry.sql
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2d1/001_write_fence.sql
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2d2/001_runtime_roles.sql
+      - name: Server-owned signed stamp integration
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d2b/test_server_stamp_integration.py 2>&1 | tee server-stamp-tests.txt
+          grep -q 'Ran 12 tests' server-stamp-tests.txt
+          grep -q '^OK$' server-stamp-tests.txt
+      - name: Runtime versions and source digests
+        if: always()
+        run: |
+          { python --version; psql -X -Atc 'select version();'; } > server-stamp-runtime.txt
+          sha256sum backend/p2_1c2b1/identity_boundary.py backend/p2_1c2c3/postgres_registry_adapter.py backend/p2_1c2d2b/*.py backend/p2_1c2d2b/*.md > server-stamp-sha256.txt
+      - name: Retain evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d2b-server-stamp-evidence
+          path: |
+            server-stamp-tests.txt
+            server-stamp-runtime.txt
+            server-stamp-sha256.txt
+          if-no-files-found: error
