@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101510">
+<meta name="description" content="Echo News Center — หนึ่งเหตุการณ์ หลายเสียง พื้นที่ทดลอง Social News ที่แยกหลักฐานออกจากความคิดเห็น">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>Echo News Center · ทุกเสียงมีที่มา</title>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">ข้ามไปเนื้อหา</a>
+<div class="demo-strip"><span class="demo-dot"></span><strong>RESEARCH PREVIEW</strong><span>ข้อมูลและบุคคลสมมติ · ไม่ใช่ข่าวปัจจุบัน</span><button data-action="about" aria-label="เกี่ยวกับเว็บทดลอง">รู้จักเดโม <span aria-hidden="true">↗</span></button></div>
+<header class="topbar">
+<a class="brand" href="#/" aria-label="Echo News Center หน้าหลัก"><span class="brandmark" aria-hidden="true">e<span></span></span><span>echo<span class="brand-sub">NEWS CENTER</span></span><span class="version">0.1</span></a>
+<label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="search" type="search" placeholder="ค้นหาเหตุการณ์ เสียง หรือพื้นที่…" autocomplete="off" maxlength="100" aria-label="ค้นหาเหตุการณ์ เสียง หรือพื้นที่"><span class="search-tip">ค้นในเดโม</span></label>
+<div class="header-actions"><button class="iconbtn mobile-search" data-action="search" aria-label="เปิดค้นหา">⌕</button><button class="header-profile" data-action="profile"><span class="avatar avatar-lime">ค</span><span>พื้นที่ของคุณ<small>บันทึกในเครื่อง</small></span></button></div>
+</header>
+<div class="shell">
+<aside class="left-rail" aria-label="เมนูหลัก">
+<div class="nav-caption">พื้นที่ของคุณ</div>
+<nav id="desktop-nav"><a href="#/" data-nav="home"><span class="nav-icon">◉</span> ศูนย์รวมข่าว <span class="tiny-label">CENTER</span></a><a href="#/following" data-nav="following"><span class="nav-icon">◎</span> ห้องที่ติดตาม</a><a href="#/mine" data-nav="mine"><span class="nav-icon">▤</span> เสียงของฉัน</a><a href="#/about" data-nav="about"><span class="nav-icon">◇</span> รู้จัก Echo</a></nav>
+<button class="primary compose-wide" data-action="compose"><span>＋</span> เพิ่มเสียงของคุณ</button>
+<div class="rail-rule"></div><div class="nav-caption">สำรวจตามความสนใจ</div><div id="topic-nav" class="topic-nav"></div>
+<div class="rail-note"><span class="eyebrow">THE ECHO PRINCIPLE</span><h3>เสียงดัง<br>ไม่เท่ากับจริง</h3><p>ดูว่าคนพูดอะไร<br>แล้วเจาะลึกว่าอ้างจากไหน</p><a href="#/about">แนวคิดเบื้องหลัง <span aria-hidden="true">↗</span></a></div>
+<footer class="rail-footer">Echo News Center<br>Research prototype · v0.1<br>ไม่มีระบบเก็บข่าวสดในรุ่นนี้</footer>
+</aside>
+<main id="main" tabindex="-1"><div class="loading"><span class="brandmark">e</span><p>กำลังเปิดพื้นที่แห่งเสียง</p></div></main>
+<aside id="right-rail" class="right-rail" aria-label="รายละเอียดเพิ่มเติม"></aside>
+</div>
+<nav class="bottom-nav" aria-label="เมนูมือถือ"><a href="#/" data-nav="home"><span>◉</span>ข่าว</a><a href="#/following" data-nav="following"><span>◎</span>ติดตาม</a><button data-action="compose" class="bottom-compose" aria-label="เพิ่มเสียงของคุณ">＋</button><a href="#/mine" data-nav="mine"><span>▤</span>เสียงฉัน</a><a href="#/about" data-nav="about"><span>◇</span>รู้จัก Echo</a></nav>
+<dialog id="modal"><div id="modal-content"></div></dialog><div id="toast" class="toast" role="status" aria-live="polite"></div>
+<noscript><div class="noscript">Echo รุ่นทดลองนี้ต้องเปิด JavaScript เพื่อดูห้องและโพสต์ ข้อมูลทั้งหมดเป็นสถานการณ์สมมติ</div></noscript>
+</body></html>

@@ -1,0 +1,1 @@
+{"name":"echo-news-preview","version":"0.1.0","private":true,"type":"module","description":"Static, fictional-data Echo Voice Room research preview","scripts":{"test":"node --test tests/core.test.mjs","check":"node --check app.js && node --check core.js && node --check data.js"}}
