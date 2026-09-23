@@ -2,11 +2,12 @@ name: Test and deploy Echo News
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: echo-pages
+  group: echo-pages-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
@@ -29,21 +30,31 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Browser interaction and responsive checks
         run: python tests/browser_smoke.py
+      - name: Alternative preview core contracts
+        run: node --test preview/tests/core.test.mjs
+      - name: Alternative preview browser integration
+        env:
+          ECHO_USE_BUNDLED_BROWSER: '1'
+        run: python preview/tests/browser_test.py
       - name: Keep verification artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: echo-verification
-          path: verification/
+          path: |
+            verification/
+            preview/results/
           if-no-files-found: ignore
       - name: Stage only public frontend files
         run: |
-          mkdir -p _site
+          mkdir -p _site/preview
           cp index.html style.css app.js core.js data.js favicon.svg .nojekyll _site/
+          cp preview/index.html preview/styles.css preview/app.mjs preview/core.mjs preview/data.mjs preview/icon.svg preview/.nojekyll _site/preview/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
   deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -64,11 +75,15 @@ jobs:
       - name: Verify published asset content
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-        run: python3 tests/verify_published.py
+        run: |
+          python3 tests/verify_published.py
+          python3 preview/tests/verify_published.py
       - name: Retain public URL verification
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: echo-published-check
-          path: verification/published-site.json
+          path: |
+            verification/published-site.json
+            preview/results/published-site.json
           if-no-files-found: ignore
