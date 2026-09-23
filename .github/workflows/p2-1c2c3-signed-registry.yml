@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m unittest -v backend/p2_1c2c3/test_signed_registry_integration.py 2>&1 | tee verification/p2_1c2c3/signed-registry.txt
-          grep -q 'Ran 15 tests' verification/p2_1c2c3/signed-registry.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2c3/signed-registry.txt
           grep -q '^OK$' verification/p2_1c2c3/signed-registry.txt
       - name: Cleanup isolated schema
         if: always()

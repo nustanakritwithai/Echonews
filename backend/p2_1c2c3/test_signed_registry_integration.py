@@ -228,5 +228,27 @@ class SignedRegistryIntegration(unittest.TestCase):
                      resolve_binding=self.adapter.resolve_binding)
 
 
+    def test_16_removed_reviewer_role_denies_old_and_fresh_signed_sessions(self):
+        self.authority_update("reviewer_enabled=true")
+        granted_jti = "review-granted-" + uuid4().hex
+        self.db("""INSERT INTO echo_identity.sessions(session_key,principal_id,auth_version,issued_at,expires_at)
+                 VALUES(%s,%s,2,to_timestamp(%s),to_timestamp(%s))""",
+                (derive_session_key(ISSUER, granted_jti), self.principal_id, self.iat, self.session_exp))
+        granted = self.bind(review(), self.token(jti=granted_jti))
+        self.assertFalse(granted.ready_for_execution)
+
+        self.authority_update("reviewer_enabled=false")
+        self.denied(lambda: self.bind(review(), self.token(jti=granted_jti)))
+
+        fresh_jti = "review-removed-" + uuid4().hex
+        self.db("""INSERT INTO echo_identity.sessions(session_key,principal_id,auth_version,issued_at,expires_at)
+                 VALUES(%s,%s,3,to_timestamp(%s),to_timestamp(%s))""",
+                (derive_session_key(ISSUER, fresh_jti), self.principal_id, self.iat, self.session_exp))
+        self.denied(lambda: self.bind(review(), self.token(jti=fresh_jti)), "CAPABILITY_REQUIRED")
+        draft_result = self.bind(token=self.token(jti=fresh_jti))
+        self.assertEqual(draft_result.actor_id, self.actor_id)
+        self.assertFalse(draft_result.ready_for_execution)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
