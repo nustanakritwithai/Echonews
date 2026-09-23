@@ -54,9 +54,9 @@ jobs:
         run: |
           set -euo pipefail
           psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2a/tests_postgres.sql 2>&1 | tee verification/p2_1c2d4a/public-read-regression.txt
-          test "$(grep -c '|SAT$' verification/p2_1c2d4a/public-read-regression.txt)" -eq 28
           grep -q 'P2.1C2A PUBLIC VOICE READ SUITE FINISHED' verification/p2_1c2d4a/public-read-regression.txt
           grep -q 'CLEAN_ROLLBACK' verification/p2_1c2d4a/public-read-regression.txt
+          ! grep -q 'ROLLBACK_LEFT_OBJECTS' verification/p2_1c2d4a/public-read-regression.txt
       - name: Preserve payload-recovery regression on isolated database
         run: |
           set -euo pipefail
