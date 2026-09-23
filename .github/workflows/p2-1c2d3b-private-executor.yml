@@ -1,0 +1,73 @@
+name: P2.1c.2d.3b Backend PRIVATE Executor Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d3b/**', '.github/workflows/p2-1c2d3b-private-executor.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d3b/**', '.github/workflows/p2-1c2d3b-private-executor.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  private-executor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_private_executor_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_private_executor_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_private_executor_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned direct dependencies and capture manifest
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          mkdir -p verification/p2_1c2d3b
+          git rev-parse HEAD | tee verification/p2_1c2d3b/checkout-sha.txt
+          sha256sum backend/p2_1c2d3b/private_voice_executor.py backend/p2_1c2d3b/test_private_voice_executor.py backend/p2_1c2d3b/README_TH.md | tee verification/p2_1c2d3b/source-sha256.txt
+          python --version | tee verification/p2_1c2d3b/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d3b/postgres.txt
+      - name: Preserve atomic PRIVATE writer regression on isolated DB
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_private_voice_write_test;'
+          PGDATABASE=echo_private_voice_write_test python database/p2_1c2d3/test_private_voice_write.py 2>&1 | tee verification/p2_1c2d3b/private-writer-regression.txt
+          grep -q 'Ran 12 tests' verification/p2_1c2d3b/private-writer-regression.txt
+          grep -q '^OK$' verification/p2_1c2d3b/private-writer-regression.txt
+          grep -q 'P2_1C2D3A_PRIVATE_VOICE_WRITE_SUITE_SAT' verification/p2_1c2d3b/private-writer-regression.txt
+          grep -q 'CLEAN_PRIVATE_VOICE_DATABASE' verification/p2_1c2d3b/private-writer-regression.txt
+      - name: Signed backend execution adapter integration
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/p2_1c2d3b/private_voice_executor.py backend/p2_1c2d3b/test_private_voice_executor.py
+          python backend/p2_1c2d3b/test_private_voice_executor.py 2>&1 | tee verification/p2_1c2d3b/private-executor.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d3b/private-executor.txt
+          grep -q '^OK$' verification/p2_1c2d3b/private-executor.txt
+          grep -q 'P2_1C2D3B_PRIVATE_EXECUTOR_SUITE_SAT' verification/p2_1c2d3b/private-executor.txt
+          grep -q 'CLEAN_PRIVATE_EXECUTOR_DATABASE' verification/p2_1c2d3b/private-executor.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d3b-private-executor-evidence
+          path: verification/p2_1c2d3b/
+          if-no-files-found: warn
