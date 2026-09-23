@@ -1,0 +1,84 @@
+name: P2.1c.2c.3 Signed Registry Integration Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/p2_1b/**', 'database/p2_1c2c/**', '.github/workflows/p2-1c2c3-signed-registry.yml']
+  pull_request:
+    paths: ['backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/p2_1b/**', 'database/p2_1c2c/**', '.github/workflows/p2-1c2c3-signed-registry.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_signed_registry_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_signed_registry_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_signed_registry_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test runtimes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          mkdir -p verification/p2_1c2c3
+          python --version | tee verification/p2_1c2c3/python.txt
+          psql -X -Atc 'select version();' | tee verification/p2_1c2c3/postgres.txt
+      - name: Existing signed-token regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2c3/token-regression python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/p2_1c2c3/token-regression.txt
+      - name: Existing durable registry regressions
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2c/session_boundary.test.mjs 2>&1 | tee verification/p2_1c2c3/session-unit.txt
+          node --test contracts/p2_1c2c/postgres_mapping.test.mjs 2>&1 | tee verification/p2_1c2c3/session-postgres.txt
+          grep -q 'CLEAN_ISOLATED_IDENTITY_DATABASE' verification/p2_1c2c3/session-postgres.txt
+      - name: Install isolated schema for signed integration
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1b/schema.sql
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2c/001_identity_registry.sql
+      - name: Real signed-token plus PostgreSQL integration
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2c3/test_signed_registry_integration.py 2>&1 | tee verification/p2_1c2c3/signed-registry.txt
+          grep -q 'Ran 15 tests' verification/p2_1c2c3/signed-registry.txt
+          grep -q '^OK$' verification/p2_1c2c3/signed-registry.txt
+      - name: Cleanup isolated schema
+        if: always()
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS echo_identity CASCADE; DROP SCHEMA IF EXISTS echo_core CASCADE;' | tee verification/p2_1c2c3/cleanup.txt
+          test "$(psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL")" = t
+      - name: Retain runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2c3-signed-registry-evidence
+          path: verification/p2_1c2c3/
+          if-no-files-found: warn

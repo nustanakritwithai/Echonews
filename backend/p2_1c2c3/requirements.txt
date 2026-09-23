@@ -1,0 +1,2 @@
+-r ../p2_1c2b1/requirements.txt
+psycopg[binary]==3.3.6
