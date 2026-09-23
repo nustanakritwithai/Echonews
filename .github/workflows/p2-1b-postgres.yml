@@ -1,0 +1,55 @@
+name: P2.1b PostgreSQL Runtime Gate
+
+on:
+  pull_request:
+    paths:
+      - 'database/p2_1b/**'
+      - '.github/workflows/p2-1b-postgres.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: echo_test_password
+          POSTGRES_DB: echo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGPASSWORD: echo_test_password
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: echo_test
+      PGDATABASE: echo_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          psql --version
+
+      - name: Run P2.1b constraint suite
+        working-directory: database/p2_1b
+        run: |
+          set -euo pipefail
+          psql -X --set=ON_ERROR_STOP=1 --file=tests_postgres.sql | tee runtime-results.txt
+          grep -q "POSTGRES CONSTRAINT SUITE FINISHED" runtime-results.txt
+
+      - name: Record server version
+        run: psql -X -Atc "select version();"
