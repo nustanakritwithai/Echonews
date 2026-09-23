@@ -25,6 +25,13 @@ jobs:
         run: |
           python -m py_compile backend/p2_1c2b1/identity_boundary.py
           python backend/p2_1c2b1/run_checks.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Preserve concurrent PR 6 command-contract regression
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2b/command_boundary.test.mjs 2>&1 | tee backend/p2_1c2b1/results/command-contract-regression.txt
       - name: Retain evidence without keys or tokens
         if: always()
         uses: actions/upload-artifact@v4
