@@ -37,7 +37,7 @@ python backend/p2_1c2b1/run_checks.py
 python -m unittest -v backend/p2_1c2c3/test_signed_registry_integration.py
 ```
 
-ชุดใหม่ตรวจอย่างน้อย valid token→DB Actor/Source, signed role injection, reviewer grant, revoke, disable/re-enable, new auth generation, subject/session mismatch, invalid signature/issuer/audience/expiry ก่อน DB, DB outage, local session expiry, token-before-session, effective expiry และ prohibition on PUBLIC field injection.
+ชุดใหม่ตรวจอย่างน้อย valid token→DB Actor/Source, signed role injection, reviewer grant **และ reviewer removal ทั้ง old/fresh signed session**, revoke, disable/re-enable, new auth generation, subject/session mismatch, invalid signature/issuer/audience/expiry ก่อน DB, DB outage, local session expiry, token-before-session, effective expiry และ prohibition on PUBLIC field injection.
 
 CI ยัง rerun P2.1c.2c session registry unit/PostgreSQL regression เดิมเพื่อรักษา dependency นี้ ผล SAT ต้องอ่านจาก run จริง ไม่ถือจำนวน expected ในเอกสารเป็น PASS
 
