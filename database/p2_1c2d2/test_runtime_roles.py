@@ -158,7 +158,7 @@ class RuntimeRoleTests(unittest.TestCase):
     def test_03_guard_has_select_only_on_authority_and_no_core_history_access(self):
         self.assertTrue(self.admin_scalar("SELECT has_function_privilege(%s,%s,'EXECUTE')", (GUARD,FENCE_SIG)))
         for table in ('echo_identity.principals','echo_identity.sessions'):
-            self.assertTrue(self.admin_scalar('SELECT has_table_privilege(%s,%s,\'SELECT\')', (GUARD,table)))
+            self.assertTrue(self.admin_scalar("SELECT has_table_privilege(%s,%s,'SELECT')", (GUARD,table)))
             for privilege in ('INSERT','UPDATE','DELETE','TRUNCATE'):
                 self.assertFalse(self.admin_scalar('SELECT has_table_privilege(%s,%s,%s)', (GUARD,table,privilege)))
         for privilege in ('SELECT','INSERT','UPDATE','DELETE','TRUNCATE'):
@@ -260,8 +260,11 @@ class RuntimeRoleTests(unittest.TestCase):
         self.wrapper_error(future)
 
     def test_18_wrapper_keeps_underlying_read_committed_only_contract(self):
-        c = self.runtime_connection()
+        c = self.connect()
         try:
+            c.autocommit = True
+            c.execute(f'SET SESSION AUTHORIZATION {RUNTIME}')
+            c.autocommit = False
             c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
             with self.assertRaises(psycopg.Error) as ctx:
                 c.execute(CALL,self.values())
