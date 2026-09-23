@@ -1,0 +1,64 @@
+name: P2.1c.2d.2a Least-Privilege Runtime Role Gate
+on:
+  push:
+    branches: [main]
+    paths: ['database/p2_1c2d2/**', '.github/workflows/p2-1c2d2-runtime-role.yml']
+  pull_request:
+    paths: ['database/p2_1c2d2/**', '.github/workflows/p2-1c2d2-runtime-role.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  least-privilege-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_runtime_role_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_runtime_role_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_runtime_role_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare runtime and manifest
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          mkdir -p verification/p2_1c2d2
+          git rev-parse HEAD | tee verification/p2_1c2d2/checkout-sha.txt
+          sha256sum database/p2_1c2d2/001_runtime_roles.sql database/p2_1c2d2/test_runtime_roles.py database/p2_1c2d2/README_TH.md | tee verification/p2_1c2d2/source-sha256.txt
+          python --version | tee verification/p2_1c2d2/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d2/postgres.txt
+      - name: Least privilege and no-bypass checks
+        run: |
+          set -euo pipefail
+          python -m py_compile database/p2_1c2d2/test_runtime_roles.py
+          python database/p2_1c2d2/test_runtime_roles.py 2>&1 | tee verification/p2_1c2d2/runtime-role.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d2/runtime-role.txt
+          grep -q '^OK$' verification/p2_1c2d2/runtime-role.txt
+          grep -q 'P2_1C2D2A_RUNTIME_ROLE_SUITE_SAT' verification/p2_1c2d2/runtime-role.txt
+          grep -q 'CLEAN_RUNTIME_ROLE_DATABASE' verification/p2_1c2d2/runtime-role.txt
+      - name: Retain runtime-role evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d2a-runtime-role-evidence
+          path: verification/p2_1c2d2/
+          if-no-files-found: warn
