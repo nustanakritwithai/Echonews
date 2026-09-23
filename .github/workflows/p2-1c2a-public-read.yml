@@ -1,0 +1,66 @@
+name: P2.1c.2a Public Voice Read Gate
+on:
+  push:
+    branches: [main]
+    paths: ['database/p2_1b/**','database/p2_1c/**','database/p2_1c2a/**','.github/workflows/p2-1c2a-public-read.yml']
+  pull_request:
+    paths: ['database/p2_1b/**','database/p2_1c/**','database/p2_1c2a/**','.github/workflows/p2-1c2a-public-read.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-voice-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2a
+          psql -X -Atc 'select version();' | tee verification/p2_1c2a/server.txt
+      - name: P2.1b regression
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1b/tests_postgres.sql 2>&1 | tee verification/p2_1c2a/p2_1b.txt
+          grep -q 'POSTGRES CONSTRAINT SUITE FINISHED' verification/p2_1c2a/p2_1b.txt
+      - name: P2.1c.1 regression
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c/tests_postgres.sql 2>&1 | tee verification/p2_1c2a/p2_1c.txt
+          grep -q 'P2.1C IMMUTABLE HISTORY SUITE FINISHED' verification/p2_1c2a/p2_1c.txt
+          grep -q 'CLEAN_ROLLBACK' verification/p2_1c2a/p2_1c.txt
+      - name: P2.1c.2a runtime
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2a/tests_postgres.sql 2>&1 | tee verification/p2_1c2a/public_read.txt
+          grep -q 'P2.1C2A PUBLIC VOICE READ SUITE FINISHED' verification/p2_1c2a/public_read.txt
+          grep -q 'CLEAN_ROLLBACK' verification/p2_1c2a/public_read.txt
+          ! grep -q 'ROLLBACK_LEFT_OBJECTS' verification/p2_1c2a/public_read.txt
+      - name: Retain runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2a-public-read-evidence
+          path: verification/p2_1c2a/
+          if-no-files-found: warn
