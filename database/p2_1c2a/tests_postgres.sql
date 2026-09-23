@@ -25,6 +25,18 @@ BEGIN
     END IF;
     INSERT INTO checks VALUES (label, 'SAT');
 END $$;
+CREATE FUNCTION pg_temp.err_any(label text, statement text, expected text[])
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE actual text;
+BEGIN
+    BEGIN EXECUTE statement;
+    EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS actual = RETURNED_SQLSTATE;
+    END;
+    IF actual IS NULL OR NOT (actual = ANY(expected)) THEN
+        RAISE EXCEPTION 'FAIL %: expected one of %, got %', label, expected, coalesce(actual,'SUCCESS');
+    END IF;
+    INSERT INTO checks VALUES (label, 'SAT');
+END $$;
 -- The probe role needs only to let the test helpers record their SAT rows in
 -- this transaction-local temp table. This is not an application grant.
 GRANT INSERT ON checks TO echo_public_reader;
@@ -79,12 +91,15 @@ SELECT pg_temp.ok('15_reader_role_can_read_projection',
  (SELECT count(*)=1 FROM echo_public.current_public_voices));
 SELECT pg_temp.err('16_reader_role_cannot_read_core_directly',
  'SELECT * FROM echo_core.voice_revisions','42501');
-SELECT pg_temp.err('17_reader_cannot_insert_projection',
- 'INSERT INTO echo_public.current_public_voices(voice_id,revision,payload_ref,recorded_at) VALUES (gen_random_uuid(),1,''x'',clock_timestamp())','42501');
-SELECT pg_temp.err('18_reader_cannot_update_projection',
- 'UPDATE echo_public.current_public_voices SET payload_ref=''forged''','42501');
-SELECT pg_temp.err('19_reader_cannot_delete_projection',
- 'DELETE FROM echo_public.current_public_voices','42501');
+-- PostgreSQL may reject DML first as insufficient privilege (42501) or because
+-- this security-barrier projection is intrinsically non-updatable (55000).
+-- Either is a fail-closed result; test 04 independently proves no DML grant.
+SELECT pg_temp.err_any('17_reader_cannot_insert_projection',
+ 'INSERT INTO echo_public.current_public_voices(voice_id,revision,payload_ref,recorded_at) VALUES (gen_random_uuid(),1,''x'',clock_timestamp())',ARRAY['42501','55000']);
+SELECT pg_temp.err_any('18_reader_cannot_update_projection',
+ 'UPDATE echo_public.current_public_voices SET payload_ref=''forged''',ARRAY['42501','55000']);
+SELECT pg_temp.err_any('19_reader_cannot_delete_projection',
+ 'DELETE FROM echo_public.current_public_voices',ARRAY['42501','55000']);
 SELECT pg_temp.err('20_reader_cannot_create_in_public_schema',
  'CREATE VIEW echo_public.forged AS SELECT 1 AS x','42501');
 RESET ROLE;
