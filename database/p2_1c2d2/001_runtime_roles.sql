@@ -20,14 +20,19 @@ CREATE ROLE echo_private_draft_guard
 CREATE ROLE echo_private_draft_runtime
     NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
--- Start from no privileges, then give the guard only enough rights to execute the
--- existing SECURITY INVOKER fence. The application runtime never gets table read.
+-- Start from no privileges, then give the sealed guard only enough rights to run
+-- the existing SECURITY INVOKER fence. SELECT ... FOR SHARE requires SELECT plus
+-- UPDATE privilege on at least one column in PostgreSQL. We therefore grant UPDATE
+-- only on immutable key columns used solely to satisfy the row-lock privilege
+-- check, never table-wide UPDATE. The application runtime gets no table access.
 REVOKE ALL ON SCHEMA echo_identity FROM echo_private_draft_guard, echo_private_draft_runtime;
 REVOKE ALL ON ALL TABLES IN SCHEMA echo_identity FROM echo_private_draft_guard, echo_private_draft_runtime;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA echo_identity FROM echo_private_draft_guard, echo_private_draft_runtime;
 
 GRANT USAGE ON SCHEMA echo_identity TO echo_private_draft_guard;
 GRANT SELECT ON echo_identity.principals, echo_identity.sessions TO echo_private_draft_guard;
+GRANT UPDATE (principal_id) ON echo_identity.principals TO echo_private_draft_guard;
+GRANT UPDATE (session_key) ON echo_identity.sessions TO echo_private_draft_guard;
 GRANT EXECUTE ON FUNCTION echo_identity.assert_private_draft_fence(
     text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint
 ) TO echo_private_draft_guard;
@@ -65,7 +70,10 @@ GRANT EXECUTE ON FUNCTION echo_identity.runtime_private_draft_fence(
 ) TO echo_private_draft_runtime;
 
 -- Transfer only the narrow wrapper to the non-login guard role. The guard gets no
--- CREATE on echo_identity and no INSERT/UPDATE/DELETE/TRUNCATE on auth tables.
+-- CREATE on echo_identity, no table-wide UPDATE, and no INSERT/DELETE/TRUNCATE.
+-- Column UPDATE on the immutable key of each authority table exists only because
+-- PostgreSQL requires it for SELECT ... FOR SHARE. Runtime has no membership in
+-- guard and cannot invoke SQL as this role.
 ALTER FUNCTION echo_identity.runtime_private_draft_fence(
     text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint
 ) OWNER TO echo_private_draft_guard;
