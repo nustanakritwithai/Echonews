@@ -1,0 +1,59 @@
+name: P2.1c.2c.2a Durable Principal Registry Gate
+on:
+  push:
+    branches: [main]
+    paths: ['database/p2_1b/**', 'database/p2_1c/**', 'database/p2_1c2a/**', 'database/p2_1c2c2a/**', '.github/workflows/p2-1c2c2a-registry.yml']
+  pull_request:
+    paths: ['database/p2_1b/**', 'database/p2_1c/**', 'database/p2_1c2a/**', 'database/p2_1c2c2a/**', '.github/workflows/p2-1c2c2a-registry.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_registry_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_registry_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_registry_test
+      ECHO_DISPOSABLE_REGISTRY_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install test client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p database/p2_1c2c2a/results
+          psql -X -Atc 'select version();' | tee database/p2_1c2c2a/results/server.txt
+      - name: Existing schema, history and public-read regressions
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1b/tests_postgres.sql 2>&1 | tee database/p2_1c2c2a/results/schema-regression.txt
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c/tests_postgres.sql 2>&1 | tee database/p2_1c2c2a/results/history-regression.txt
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2a/tests_postgres.sql 2>&1 | tee database/p2_1c2c2a/results/public-read-regression.txt
+      - name: Registry isolation, revocation and competing-administrator runtime checks
+        run: |
+          python3 -m py_compile database/p2_1c2c2a/run_checks.py
+          python3 database/p2_1c2c2a/run_checks.py
+      - name: Keep actual evidence (fictional identifiers only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2c2a-registry-evidence
+          path: database/p2_1c2c2a/results/
+          if-no-files-found: warn
