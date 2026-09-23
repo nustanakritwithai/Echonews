@@ -25,6 +25,9 @@ BEGIN
     END IF;
     INSERT INTO checks VALUES (label, 'SAT');
 END $$;
+-- The probe role needs only to let the test helpers record their SAT rows in
+-- this transaction-local temp table. This is not an application grant.
+GRANT INSERT ON checks TO echo_public_reader;
 
 SELECT pg_temp.ok('01_reader_is_nonlogin_nonprivileged',
  (SELECT NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
