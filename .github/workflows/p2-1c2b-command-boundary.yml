@@ -1,0 +1,33 @@
+name: P2.1c.2b Trusted Command Boundary
+on:
+  push:
+    branches: [main]
+    paths: ['contracts/p2_1c2b/**', '.github/workflows/p2-1c2b-command-boundary.yml']
+  pull_request:
+    paths: ['contracts/p2_1c2b/**', '.github/workflows/p2-1c2b-command-boundary.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  command-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Trusted writer/reviewer command tests
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2b
+          node --test contracts/p2_1c2b/command_boundary.test.mjs 2>&1 | tee verification/p2_1c2b/results.txt
+      - name: Retain runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2b-command-evidence
+          path: verification/p2_1c2b/
+          if-no-files-found: warn
