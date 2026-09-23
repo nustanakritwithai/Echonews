@@ -1,0 +1,73 @@
+name: P2.1c.2d.3a Atomic PRIVATE Voice Write Gate
+on:
+  push:
+    branches: [main]
+    paths: ['database/p2_1c2d3/**', '.github/workflows/p2-1c2d3-private-write.yml']
+  pull_request:
+    paths: ['database/p2_1c2d3/**', '.github/workflows/p2-1c2d3-private-write.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  private-voice-write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_private_voice_write_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_private_voice_write_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_private_voice_write_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare runtime and evidence manifest
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          mkdir -p verification/p2_1c2d3
+          git rev-parse HEAD | tee verification/p2_1c2d3/checkout-sha.txt
+          sha256sum database/p2_1c2d3/001_private_voice_write.sql database/p2_1c2d3/test_private_voice_write.py database/p2_1c2d3/README_TH.md | tee verification/p2_1c2d3/source-sha256.txt
+          python --version | tee verification/p2_1c2d3/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d3/postgres.txt
+      - name: Preserve least-privilege runtime regression on separate DB
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_runtime_role_test;'
+          PGDATABASE=echo_runtime_role_test python database/p2_1c2d2/test_runtime_roles.py 2>&1 | tee verification/p2_1c2d3/runtime-role-regression.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d3/runtime-role-regression.txt
+          grep -q '^OK$' verification/p2_1c2d3/runtime-role-regression.txt
+          grep -q 'P2_1C2D2A_RUNTIME_ROLE_SUITE_SAT' verification/p2_1c2d3/runtime-role-regression.txt
+          grep -q 'CLEAN_RUNTIME_ROLE_DATABASE' verification/p2_1c2d3/runtime-role-regression.txt
+      - name: Atomic immutable PRIVATE Voice write and concurrency gate
+        run: |
+          set -euo pipefail
+          python -m py_compile database/p2_1c2d3/test_private_voice_write.py
+          python database/p2_1c2d3/test_private_voice_write.py 2>&1 | tee verification/p2_1c2d3/private-voice-write.txt
+          grep -q 'Ran 12 tests' verification/p2_1c2d3/private-voice-write.txt
+          grep -q '^OK$' verification/p2_1c2d3/private-voice-write.txt
+          grep -q 'P2_1C2D3A_PRIVATE_VOICE_WRITE_SUITE_SAT' verification/p2_1c2d3/private-voice-write.txt
+          grep -q 'CLEAN_PRIVATE_VOICE_DATABASE' verification/p2_1c2d3/private-voice-write.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d3a-private-voice-write-evidence
+          path: verification/p2_1c2d3/
+          if-no-files-found: warn
