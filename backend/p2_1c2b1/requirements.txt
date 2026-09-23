@@ -1,0 +1,3 @@
+# Explicit research runtime; not a claim of full transitive supply-chain pinning.
+PyJWT[crypto]==2.13.0
+cryptography==46.0.4
