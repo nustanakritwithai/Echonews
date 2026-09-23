@@ -1,8 +1,8 @@
-"""Echo P2.1c.2b.1: signed-token -> server-owned actor -> command preflight.
+"""Echo P2.1c.2b.1 / P2.1c.2c.3: signed-token identity preflight.
 
 NOT an HTTP server, OIDC provider, DB writer or object-level authorization grant.
 The only untrusted entrypoint is Boundary.bind(authorization, raw_body).
-Configuration, key selection and binding/revocation adapters are trusted backend code.
+Configuration, key selection and identity adapters are trusted backend code.
 No network fetches, token logging, key minting or default production configuration.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from uuid import UUID
 import jwt
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
-POLICY_VERSION = "echo-identity-preflight-v0.1"
+POLICY_VERSION = "echo-identity-preflight-v0.2"
 CAPABILITIES = frozenset({"voice:draft:create", "assessment:review"})
 ACTOR_KINDS = frozenset({"HUMAN", "AI", "SYSTEM", "TEST_FIXTURE", "UNKNOWN"})
 TOKEN_LIMIT = 8192
@@ -54,7 +54,7 @@ def _inspect_json(value: object, depth: int = 0) -> None:
     if isinstance(value, float) and not math.isfinite(value):
         raise ValueError("non-finite JSON number")
     if isinstance(value, str):
-        value.encode("utf-8", errors="strict")  # Reject escaped lone surrogates.
+        value.encode("utf-8", errors="strict")
         if "\x00" in value:
             raise ValueError("NUL is not supported")
     elif isinstance(value, dict):
@@ -89,16 +89,16 @@ def _uuid(value: object) -> UUID:
 def _text(value: object, maximum: int) -> str:
     if type(value) is not str or not value.strip() or len(value) > maximum:
         raise ValueError("invalid text")
-    return value  # Preserve original content; do not rewrite the author's voice.
+    return value
 
 
 @dataclass(frozen=True)
 class ActorBinding:
-    """Record supplied by the TRUSTED registry, never deserialized from a request.
+    """Trusted registry result; never deserialize this dataclass from a request.
 
-    issuer+subject identifies the external principal; actor_id identifies the Echo
-    actor. One is not derived by trusting actor_id/role/email fields in the token.
-    tokens_valid_from is an inclusive issued-at cutoff, not an observation time.
+    For the durable-registry path source_id is server-owned, and
+    authorization_expires_at is the registry/session upper bound in Unix seconds.
+    Legacy fixture adapters may omit those two optional fields.
     """
 
     issuer: str
@@ -109,6 +109,8 @@ class ActorBinding:
     revision: int
     enabled: bool
     tokens_valid_from: int = 0
+    source_id: UUID | None = None
+    authorization_expires_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,7 @@ class Config:
     audience: str
     key_set_version: str
     keys: Mapping[str, RSAPublicKey] = field(repr=False)
-    max_lifetime_seconds: int = 900  # Research profile; not a proven optimal TTL.
+    max_lifetime_seconds: int = 900
 
     def __post_init__(self) -> None:
         if (type(self.issuer) is not str or not self.issuer.startswith("https://")
@@ -152,12 +154,7 @@ class ReviewIntent:
 
 @dataclass(frozen=True)
 class BoundIntent:
-    """In-process preflight only. This is NOT an authorization bearer artifact.
-
-    A Python object can be constructed/modified by trusted in-process code; frozen
-    fields prevent accidents, not malicious code running inside the backend.
-    Never reconstruct this object from client JSON or accept it as DB authority.
-    """
+    """In-process preflight only. This is NOT an authorization bearer artifact."""
 
     request_id: UUID
     command: str
@@ -168,24 +165,33 @@ class BoundIntent:
     expires_at: int
     key_set_version: str
     payload: DraftIntent | ReviewIntent
+    source_id: UUID | None = None
     policy_version: str = POLICY_VERSION
 
     @property
     def ready_for_execution(self) -> bool:
-        return False  # Object permission, transactional recheck and DB command pending.
+        return False
 
 
 class Boundary:
     def __init__(self, config: Config,
-                 lookup_binding: Callable[[str, str], ActorBinding | None],
-                 is_revoked: Callable[[str, str], bool]):
-        if not callable(lookup_binding) or not callable(is_revoked):
-            raise ValueError("explicit trusted adapters required")
+                 lookup_binding: Callable[[str, str], ActorBinding | None] | None = None,
+                 is_revoked: Callable[[str, str], bool] | None = None,
+                 *, resolve_binding: Callable[[str, str, str], ActorBinding | None] | None = None):
         self._config = config
-        self._lookup = lookup_binding
-        self._is_revoked = is_revoked
+        self._resolve = resolve_binding
+        if resolve_binding is not None:
+            if not callable(resolve_binding) or lookup_binding is not None or is_revoked is not None:
+                raise ValueError("atomic resolver cannot be combined with legacy adapters")
+            self._lookup = None
+            self._is_revoked = None
+        else:
+            if not callable(lookup_binding) or not callable(is_revoked):
+                raise ValueError("explicit trusted adapters required")
+            self._lookup = lookup_binding
+            self._is_revoked = is_revoked
 
-    def _authenticate(self, authorization: str | None) -> tuple[ActorBinding, dict]:
+    def _authenticate(self, authorization: str | None) -> tuple[ActorBinding, dict, int]:
         try:
             if type(authorization) is not str or not authorization.startswith("Bearer "):
                 raise ValueError("bearer header required")
@@ -201,14 +207,12 @@ class Boundary:
                 return _json_object(decoded, TOKEN_LIMIT)
 
             header = decode_json(parts[0])
-            untrusted_claims = decode_json(parts[1])  # Strict JSON checks ONLY.
+            untrusted_claims = decode_json(parts[1])
             if (set(header) != {"alg", "typ", "kid"}
                     or header["alg"] != "RS256" or header["typ"] != "at+jwt"
                     or type(header["kid"]) is not str
                     or header["kid"] not in self._config.keys):
                 raise ValueError("unsupported header")
-            # Signature/issuer/audience/expiry validated by the library, with an
-            # algorithm fixed by the SERVER, not computed from the token header.
             claims = jwt.decode(
                 token, self._config.keys[header["kid"]], algorithms=["RS256"],
                 issuer=self._config.issuer, audience=self._config.audience,
@@ -235,13 +239,14 @@ class Boundary:
                 jwt.InvalidTokenError, jwt.InvalidKeyError):
             raise BoundaryError("IDENTITY_REJECTED") from None
 
-        # No successful identity lookup before a valid signature. Never cache
-        # enabled/capabilities decisions in this layer; adapters must be current.
         try:
-            revoked = self._is_revoked(self._config.issuer, claims["jti"])
-            if type(revoked) is not bool:
-                raise ValueError("revocation adapter contract violation")
-            binding = self._lookup(self._config.issuer, claims["sub"]) if not revoked else None
+            if self._resolve is not None:
+                binding = self._resolve(self._config.issuer, claims["sub"], claims["jti"])
+            else:
+                revoked = self._is_revoked(self._config.issuer, claims["jti"])
+                if type(revoked) is not bool:
+                    raise ValueError("revocation adapter contract violation")
+                binding = self._lookup(self._config.issuer, claims["sub"]) if not revoked else None
         except Exception:
             raise BoundaryError("IDENTITY_BACKEND_UNAVAILABLE") from None
         if binding is None or type(binding) is not ActorBinding:
@@ -254,17 +259,23 @@ class Boundary:
                 or type(binding.tokens_valid_from) is not int or binding.tokens_valid_from < 0
                 or type(binding.capabilities) is not frozenset
                 or not binding.capabilities <= CAPABILITIES
+                or (binding.source_id is not None
+                    and (type(binding.source_id) is not UUID or binding.source_id.int == 0))
+                or (binding.authorization_expires_at is not None
+                    and (type(binding.authorization_expires_at) is not int
+                         or binding.authorization_expires_at <= 0))
                 or claims["iat"] < binding.tokens_valid_from):
             raise BoundaryError("IDENTITY_REJECTED")
-        return binding, claims
+        effective_exp = claims["exp"]
+        if binding.authorization_expires_at is not None:
+            effective_exp = min(effective_exp, binding.authorization_expires_at)
+        if effective_exp <= claims["iat"]:
+            raise BoundaryError("IDENTITY_REJECTED")
+        return binding, claims, effective_exp
 
     def bind(self, authorization: str | None, raw_body: bytes) -> BoundIntent:
-        """Bind intent identity/capability only. Does not authorize target objects.
-
-        Caller supplies raw JSON bytes, never an arbitrary principal dictionary.
-        Unknown members are rejected rather than bound to persistence models.
-        """
-        binding, claims = self._authenticate(authorization)
+        """Bind verified identity/capability only; target authorization is pending."""
+        binding, claims, effective_exp = self._authenticate(authorization)
         try:
             request = _json_object(raw_body, BODY_LIMIT)
             if set(request) != {"request_id", "command", "payload"}:
@@ -301,5 +312,5 @@ class Boundary:
         return BoundIntent(request_id=request_id, command=command,
                            actor_id=binding.actor_id, actor_kind=binding.actor_kind,
                            binding_revision=binding.revision, issued_at=claims["iat"],
-                           expires_at=claims["exp"], key_set_version=self._config.key_set_version,
-                           payload=parsed)
+                           expires_at=effective_exp, key_set_version=self._config.key_set_version,
+                           payload=parsed, source_id=binding.source_id)
