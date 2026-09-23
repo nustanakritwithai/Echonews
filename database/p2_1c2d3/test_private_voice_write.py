@@ -126,7 +126,8 @@ class PrivateVoiceWriteTests(unittest.TestCase):
 
     def call_values(self, stamp=None, voice_id=None, payload_ref=None):
         return self.stamp_values(stamp) + (
-            voice_id or uuid4(), payload_ref or ('payload:' + uuid4().hex),
+            voice_id if voice_id is not None else uuid4(),
+            payload_ref if payload_ref is not None else ('payload:' + uuid4().hex),
         )
 
     def runtime_error(self, sql, params=(), state='42501'):
@@ -252,7 +253,7 @@ class PrivateVoiceWriteTests(unittest.TestCase):
                 self.runtime_error(CALL,self.call_values(voice_id=voice_id,payload_ref=payload),'22023')
 
     def test_11_revoke_that_locks_first_commits_then_blocked_writer_is_denied(self):
-        s=self.make_fixture(); voice_id=uuid4(); revoker=self.connect();
+        s=self.make_fixture(); voice_id=uuid4(); revoker=self.connect()
         revoker.execute('UPDATE echo_identity.sessions SET revoked=true WHERE session_key=%s',(s['session_key'],))
         started=threading.Event();done=threading.Event();result={}
         def writer():
