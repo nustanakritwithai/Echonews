@@ -1,0 +1,70 @@
+name: P2.1c.2d.3c Idempotent PRIVATE Draft Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d3c/**', 'database/p2_1c2d3c/**', '.github/workflows/p2-1c2d3c-idempotency.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d3c/**', 'database/p2_1c2d3c/**', '.github/workflows/p2-1c2d3c-idempotency.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  idempotent-private-draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_idempotent_private_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_idempotent_private_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_idempotent_private_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture versions
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          mkdir -p verification/p2_1c2d3c
+          git rev-parse HEAD | tee verification/p2_1c2d3c/checkout-sha.txt
+          python --version | tee verification/p2_1c2d3c/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d3c/postgres.txt
+          sha256sum database/p2_1c2d3c/001_idempotent_private_receipt.sql backend/p2_1c2d3c/idempotent_private_voice_executor.py backend/p2_1c2d3c/test_idempotent_private_voice_executor.py backend/p2_1c2d3c/README_TH.md | tee verification/p2_1c2d3c/source-sha256.txt
+      - name: Preserve previous executor regression on isolated database
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_private_executor_test;'
+          PGDATABASE=echo_private_executor_test python backend/p2_1c2d3b/test_private_voice_executor.py 2>&1 | tee verification/p2_1c2d3c/private-executor-regression.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d3c/private-executor-regression.txt
+          grep -q '^OK$' verification/p2_1c2d3c/private-executor-regression.txt
+          grep -q 'P2_1C2D3B_PRIVATE_EXECUTOR_SUITE_SAT' verification/p2_1c2d3c/private-executor-regression.txt
+      - name: Idempotent receipt integration
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/p2_1c2d3c/idempotent_private_voice_executor.py backend/p2_1c2d3c/test_idempotent_private_voice_executor.py
+          python backend/p2_1c2d3c/test_idempotent_private_voice_executor.py 2>&1 | tee verification/p2_1c2d3c/idempotency.txt
+          grep -q 'P2_1C2D3C_IDEMPOTENT_PRIVATE_SUITE_SAT' verification/p2_1c2d3c/idempotency.txt
+          grep -q 'CLEAN_IDEMPOTENT_PRIVATE_DATABASE' verification/p2_1c2d3c/idempotency.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d3c-idempotency-evidence
+          path: verification/p2_1c2d3c/
+          if-no-files-found: warn
