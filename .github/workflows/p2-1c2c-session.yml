@@ -1,0 +1,72 @@
+name: P2.1c.2c Session Mapping Gate
+on:
+  push:
+    branches: [main]
+    paths: ['contracts/p2_1c2b/**', 'contracts/p2_1c2c/**', 'database/**', '.github/workflows/p2-1c2c-session.yml']
+  pull_request:
+    paths: ['contracts/p2_1c2b/**', 'contracts/p2_1c2c/**', 'database/**', '.github/workflows/p2-1c2c-session.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  session-mapping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_session_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_session_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare isolated test runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2c
+          psql -X -Atc 'select version();' | tee verification/p2_1c2c/server.txt
+          node --version | tee verification/p2_1c2c/node.txt
+      - name: Existing database regressions
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1b/tests_postgres.sql 2>&1 | tee verification/p2_1c2c/p2_1b.txt
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c/tests_postgres.sql 2>&1 | tee verification/p2_1c2c/p2_1c.txt
+          psql -X -v ON_ERROR_STOP=1 -f database/p2_1c2a/tests_postgres.sql 2>&1 | tee verification/p2_1c2c/p2_1c2a.txt
+      - name: Existing command boundary regression
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2b/command_boundary.test.mjs 2>&1 | tee verification/p2_1c2c/commands.txt
+      - name: Session resolver contract tests
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2c/session_boundary.test.mjs 2>&1 | tee verification/p2_1c2c/session-unit.txt
+      - name: Real PostgreSQL session mapping integration
+        run: |
+          set -euo pipefail
+          node --test contracts/p2_1c2c/postgres_mapping.test.mjs 2>&1 | tee verification/p2_1c2c/session-postgres.txt
+          grep -q 'CLEAN_ISOLATED_IDENTITY_DATABASE' verification/p2_1c2c/session-postgres.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2c-session-evidence
+          path: verification/p2_1c2c/
+          if-no-files-found: warn
