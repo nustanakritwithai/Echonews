@@ -23,8 +23,8 @@ for (const field of ['actorId','actor_id','authorId','author_id','sourceId','sou
 for (const field of ['assessorId','assessor_id','assessorKind','assessor_kind','reviewerId','reviewer_id','methodVersion','method_version','recordedAt','recorded_at','eventId','event_id','claimId','claim_id','evidenceId','evidence_id','relation']) {
   test(`review client cannot supply trusted or retarget field ${field}`,()=>assert.throws(()=>bindReviewAssessment({...reviewBody(),[field]:REVIEWER},reviewAuth(),existing(),server()),/field not allowed/));
 }
-test('allowed voice body is intentionally tiny',()=>assert.deepEqual(clientVoiceFields.sort(),['content','visibility']));
-test('allowed review body cannot retarget claim or evidence',()=>assert.deepEqual(clientReviewFields.sort(),['assessmentId','decision','expectedRevision','rationale']));
+test('allowed voice body is intentionally tiny',()=>assert.deepEqual([...clientVoiceFields].sort(),['content','visibility']));
+test('allowed review body cannot retarget claim or evidence',()=>assert.deepEqual([...clientReviewFields].sort(),['assessmentId','decision','expectedRevision','rationale']));
 test('voice identity comes only from trusted auth context',()=>{const c=bindCreateVoice({content:'hello',visibility:'PUBLIC'},auth(),server());assert.equal(c.authorId,WRITER);assert.equal(c.sourceId,SOURCE);});
 test('voice id, payload ref and timestamps come only from server dependencies',()=>{const c=bindCreateVoice({content:'สวัสดี'},auth(),server());assert.equal(c.voiceId,VOICE);assert.equal(c.payloadRef,'payload:6');assert.equal(c.recordedAt,NOW);assert.equal(c.postedAt,NOW);});
 test('voice defaults to PRIVATE when client does not choose PUBLIC',()=>assert.equal(bindCreateVoice({content:'hello'},auth(),server()).visibility,'PRIVATE'));
