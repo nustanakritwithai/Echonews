@@ -1,0 +1,77 @@
+name: P2.1c.2d.3d Payload Recovery Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d3d/**', 'database/p2_1c2d3d/**', '.github/workflows/p2-1c2d3d-payload-recovery.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d3d/**', 'database/p2_1c2d3d/**', '.github/workflows/p2-1c2d3d-payload-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  payload-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_payload_recovery_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_payload_recovery_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_payload_recovery_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture versions
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d3d
+          git rev-parse HEAD | tee verification/p2_1c2d3d/checkout-sha.txt
+          python --version | tee verification/p2_1c2d3d/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d3d/postgres.txt
+          sha256sum database/p2_1c2d3d/001_payload_recovery.sql \
+            backend/p2_1c2d3d/recoverable_private_voice_executor.py \
+            backend/p2_1c2d3d/test_recoverable_private_voice_executor.py \
+            backend/p2_1c2d3d/README_TH.md | tee verification/p2_1c2d3d/source-sha256.txt
+      - name: Preserve P2.1c.2d.3c regression on isolated database
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_idempotent_private_test;'
+          PGDATABASE=echo_idempotent_private_test python backend/p2_1c2d3c/test_idempotent_private_voice_executor.py 2>&1 | tee verification/p2_1c2d3d/idempotency-regression.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d3d/idempotency-regression.txt
+          grep -q '^OK$' verification/p2_1c2d3d/idempotency-regression.txt
+          grep -q 'P2_1C2D3C_IDEMPOTENT_PRIVATE_SUITE_SAT' verification/p2_1c2d3d/idempotency-regression.txt
+      - name: Payload lifecycle and crash recovery integration
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/p2_1c2d3d/recoverable_private_voice_executor.py backend/p2_1c2d3d/test_recoverable_private_voice_executor.py
+          python backend/p2_1c2d3d/test_recoverable_private_voice_executor.py 2>&1 | tee verification/p2_1c2d3d/payload-recovery.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d3d/payload-recovery.txt
+          grep -q '^OK$' verification/p2_1c2d3d/payload-recovery.txt
+          grep -q 'P2_1C2D3D_PAYLOAD_RECOVERY_SUITE_SAT' verification/p2_1c2d3d/payload-recovery.txt
+          grep -q 'CLEAN_PAYLOAD_RECOVERY_DATABASE' verification/p2_1c2d3d/payload-recovery.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d3d-payload-recovery-evidence
+          path: verification/p2_1c2d3d/
+          if-no-files-found: warn
