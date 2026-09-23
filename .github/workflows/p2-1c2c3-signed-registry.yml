@@ -49,6 +49,7 @@ jobs:
           mkdir -p verification/p2_1c2c3
           python --version | tee verification/p2_1c2c3/python.txt
           psql -X -Atc 'select version();' | tee verification/p2_1c2c3/postgres.txt
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_session_test;'
       - name: Existing signed-token regression
         run: |
           set -euo pipefail
@@ -57,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test contracts/p2_1c2c/session_boundary.test.mjs 2>&1 | tee verification/p2_1c2c3/session-unit.txt
-          node --test contracts/p2_1c2c/postgres_mapping.test.mjs 2>&1 | tee verification/p2_1c2c3/session-postgres.txt
+          PGDATABASE=echo_session_test node --test contracts/p2_1c2c/postgres_mapping.test.mjs 2>&1 | tee verification/p2_1c2c3/session-postgres.txt
           grep -q 'CLEAN_ISOLATED_IDENTITY_DATABASE' verification/p2_1c2c3/session-postgres.txt
       - name: Install isolated schema for signed integration
         run: |
