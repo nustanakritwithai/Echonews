@@ -1,6 +1,12 @@
 name: P2.1b PostgreSQL Runtime Gate
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'database/p2_1b/**'
+      - '.github/workflows/p2-1b-postgres.yml'
   pull_request:
     paths:
       - 'database/p2_1b/**'
