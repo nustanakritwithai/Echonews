@@ -11,6 +11,7 @@ import base64
 import binascii
 import json
 import math
+import hashlib
 import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -25,6 +26,8 @@ CAPABILITIES = frozenset({"voice:draft:create", "assessment:review"})
 ACTOR_KINDS = frozenset({"HUMAN", "AI", "SYSTEM", "TEST_FIXTURE", "UNKNOWN"})
 TOKEN_LIMIT = 8192
 BODY_LIMIT = 16384
+TOKEN_USE = "ECHO_API_ACCESS"
+MAX_SAFE_JS_INTEGER = 2**53 - 1
 
 
 class BoundaryError(Exception):
@@ -138,6 +141,99 @@ class Config:
 
 
 @dataclass(frozen=True)
+class VerifiedCredential:
+    """Signed access-token result safe to hand to the durable session resolver.
+
+    This object is created only after signature/issuer/audience/time validation.
+    It deliberately omits token role/actor/source claims from authorization.
+    session_key is an issuer-bound digest of the verified jti, never a client field.
+    """
+
+    issuer: str
+    subject: str
+    audience: str
+    jti: str = field(repr=False)
+    issued_at: int
+    not_before: int
+    expires_at: int
+    key_set_version: str
+
+    @property
+    def session_key(self) -> str:
+        material = ("echo-session-v1\\x00" + self.issuer + "\\x00" + self.jti).encode("utf-8")
+        return hashlib.sha256(material).hexdigest()
+
+    def as_session_result(self) -> dict[str, object]:
+        return {
+            "tokenUse": TOKEN_USE,
+            "issuer": self.issuer,
+            "subject": self.subject,
+            "audiences": [self.audience],
+            "sessionKey": self.session_key,
+            "issuedAtMs": self.issued_at * 1000,
+            "notBeforeMs": self.not_before * 1000,
+            "expiresAtMs": self.expires_at * 1000,
+        }
+
+
+def verify_credential(config: Config, authorization: str | None) -> VerifiedCredential:
+    """Verify one bearer access token without consulting Actor/role storage."""
+    try:
+        if type(authorization) is not str or not authorization.startswith("Bearer "):
+            raise ValueError("bearer header required")
+        token = authorization[7:]
+        if not 0 < len(token) <= TOKEN_LIMIT:
+            raise ValueError("token exceeds profile")
+        parts = token.split(".")
+        if len(parts) != 3 or any(not re.fullmatch(r"[A-Za-z0-9_-]+", p) for p in parts):
+            raise ValueError("invalid compact JWS")
+
+        def decode_json(part: str) -> dict:
+            decoded = base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+            return _json_object(decoded, TOKEN_LIMIT)
+
+        header = decode_json(parts[0])
+        untrusted_claims = decode_json(parts[1])  # Strict JSON checks ONLY.
+        if (set(header) != {"alg", "typ", "kid"}
+                or header["alg"] != "RS256" or header["typ"] != "at+jwt"
+                or type(header["kid"]) is not str
+                or header["kid"] not in config.keys):
+            raise ValueError("unsupported header")
+        claims = jwt.decode(
+            token, config.keys[header["kid"]], algorithms=["RS256"],
+            issuer=config.issuer, audience=config.audience,
+            leeway=0,
+            options={"require": ["iss", "aud", "sub", "exp", "iat", "nbf", "jti"],
+                     "verify_signature": True, "verify_exp": True,
+                     "verify_nbf": True, "verify_iat": True,
+                     "verify_iss": True, "verify_aud": True,
+                     "verify_sub": True, "verify_jti": True, "strict_aud": True},
+        )
+        if claims != untrusted_claims:
+            raise ValueError("parser disagreement")
+        if claims["iss"] != config.issuer or claims["aud"] != config.audience:
+            raise ValueError("exact issuer and audience required")
+        for key in ("sub", "jti"):
+            _text(claims[key], 256)
+        max_numeric_date = MAX_SAFE_JS_INTEGER // 1000
+        for key in ("iat", "nbf", "exp"):
+            if type(claims[key]) is not int or not 0 <= claims[key] <= max_numeric_date:
+                raise ValueError("integral JS-safe NumericDate required")
+        if not (claims["iat"] <= claims["nbf"] < claims["exp"]
+                and 0 < claims["exp"] - claims["iat"] <= config.max_lifetime_seconds):
+            raise ValueError("invalid validity window")
+    except (ValueError, TypeError, KeyError, RecursionError, binascii.Error,
+            jwt.InvalidTokenError, jwt.InvalidKeyError):
+        raise BoundaryError("IDENTITY_REJECTED") from None
+
+    return VerifiedCredential(
+        issuer=config.issuer, subject=claims["sub"], audience=config.audience,
+        jti=claims["jti"], issued_at=claims["iat"], not_before=claims["nbf"],
+        expires_at=claims["exp"], key_set_version=config.key_set_version,
+    )
+
+
+@dataclass(frozen=True)
 class DraftIntent:
     text: str = field(repr=False)
 
@@ -185,68 +281,21 @@ class Boundary:
         self._lookup = lookup_binding
         self._is_revoked = is_revoked
 
-    def _authenticate(self, authorization: str | None) -> tuple[ActorBinding, dict]:
+    def _authenticate(self, authorization: str | None) -> tuple[ActorBinding, VerifiedCredential]:
+        verified = verify_credential(self._config, authorization)
+
+        # Registry/revocation checks happen only after a valid signed credential.
+        # Never cache enabled/capabilities decisions in this layer.
         try:
-            if type(authorization) is not str or not authorization.startswith("Bearer "):
-                raise ValueError("bearer header required")
-            token = authorization[7:]
-            if not 0 < len(token) <= TOKEN_LIMIT:
-                raise ValueError("token exceeds profile")
-            parts = token.split(".")
-            if len(parts) != 3 or any(not re.fullmatch(r"[A-Za-z0-9_-]+", p) for p in parts):
-                raise ValueError("invalid compact JWS")
-
-            def decode_json(part: str) -> dict:
-                decoded = base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
-                return _json_object(decoded, TOKEN_LIMIT)
-
-            header = decode_json(parts[0])
-            untrusted_claims = decode_json(parts[1])  # Strict JSON checks ONLY.
-            if (set(header) != {"alg", "typ", "kid"}
-                    or header["alg"] != "RS256" or header["typ"] != "at+jwt"
-                    or type(header["kid"]) is not str
-                    or header["kid"] not in self._config.keys):
-                raise ValueError("unsupported header")
-            # Signature/issuer/audience/expiry validated by the library, with an
-            # algorithm fixed by the SERVER, not computed from the token header.
-            claims = jwt.decode(
-                token, self._config.keys[header["kid"]], algorithms=["RS256"],
-                issuer=self._config.issuer, audience=self._config.audience,
-                leeway=0,
-                options={"require": ["iss", "aud", "sub", "exp", "iat", "nbf", "jti"],
-                         "verify_signature": True, "verify_exp": True,
-                         "verify_nbf": True, "verify_iat": True,
-                         "verify_iss": True, "verify_aud": True,
-                         "verify_sub": True, "verify_jti": True, "strict_aud": True},
-            )
-            if claims != untrusted_claims:
-                raise ValueError("parser disagreement")
-            if claims["iss"] != self._config.issuer or claims["aud"] != self._config.audience:
-                raise ValueError("exact issuer and audience required")
-            for key in ("sub", "jti"):
-                _text(claims[key], 256)
-            for key in ("iat", "nbf", "exp"):
-                if type(claims[key]) is not int or not 0 <= claims[key] < 2**53:
-                    raise ValueError("integral NumericDate required")
-            if not (claims["iat"] <= claims["nbf"] < claims["exp"]
-                    and 0 < claims["exp"] - claims["iat"] <= self._config.max_lifetime_seconds):
-                raise ValueError("invalid validity window")
-        except (ValueError, TypeError, KeyError, RecursionError, binascii.Error,
-                jwt.InvalidTokenError, jwt.InvalidKeyError):
-            raise BoundaryError("IDENTITY_REJECTED") from None
-
-        # No successful identity lookup before a valid signature. Never cache
-        # enabled/capabilities decisions in this layer; adapters must be current.
-        try:
-            revoked = self._is_revoked(self._config.issuer, claims["jti"])
+            revoked = self._is_revoked(verified.issuer, verified.jti)
             if type(revoked) is not bool:
                 raise ValueError("revocation adapter contract violation")
-            binding = self._lookup(self._config.issuer, claims["sub"]) if not revoked else None
+            binding = self._lookup(verified.issuer, verified.subject) if not revoked else None
         except Exception:
             raise BoundaryError("IDENTITY_BACKEND_UNAVAILABLE") from None
         if binding is None or type(binding) is not ActorBinding:
             raise BoundaryError("IDENTITY_REJECTED")
-        if (binding.issuer != self._config.issuer or binding.subject != claims["sub"]
+        if (binding.issuer != verified.issuer or binding.subject != verified.subject
                 or type(binding.actor_id) is not UUID or binding.actor_id.int == 0
                 or type(binding.actor_kind) is not str or binding.actor_kind not in ACTOR_KINDS
                 or type(binding.enabled) is not bool or not binding.enabled
@@ -254,9 +303,9 @@ class Boundary:
                 or type(binding.tokens_valid_from) is not int or binding.tokens_valid_from < 0
                 or type(binding.capabilities) is not frozenset
                 or not binding.capabilities <= CAPABILITIES
-                or claims["iat"] < binding.tokens_valid_from):
+                or verified.issued_at < binding.tokens_valid_from):
             raise BoundaryError("IDENTITY_REJECTED")
-        return binding, claims
+        return binding, verified
 
     def bind(self, authorization: str | None, raw_body: bytes) -> BoundIntent:
         """Bind intent identity/capability only. Does not authorize target objects.
@@ -264,7 +313,7 @@ class Boundary:
         Caller supplies raw JSON bytes, never an arbitrary principal dictionary.
         Unknown members are rejected rather than bound to persistence models.
         """
-        binding, claims = self._authenticate(authorization)
+        binding, verified = self._authenticate(authorization)
         try:
             request = _json_object(raw_body, BODY_LIMIT)
             if set(request) != {"request_id", "command", "payload"}:
@@ -300,6 +349,6 @@ class Boundary:
             raise BoundaryError("HUMAN_REVIEW_REQUIRED")
         return BoundIntent(request_id=request_id, command=command,
                            actor_id=binding.actor_id, actor_kind=binding.actor_kind,
-                           binding_revision=binding.revision, issued_at=claims["iat"],
-                           expires_at=claims["exp"], key_set_version=self._config.key_set_version,
+                           binding_revision=binding.revision, issued_at=verified.issued_at,
+                           expires_at=verified.expires_at, key_set_version=verified.key_set_version,
                            payload=parsed)
