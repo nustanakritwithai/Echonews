@@ -43,6 +43,87 @@ CREATE TABLE echo_execution.private_draft_probe (
 );
 REVOKE ALL ON ALL TABLES IN SCHEMA echo_execution FROM PUBLIC;
 
+-- Private SECURITY DEFINER mirror of the P2.1c.2d.1 fence semantics. We cannot
+-- safely call the existing SECURITY INVOKER fence from a restricted caller and
+-- expect the outer SECURITY DEFINER's table privileges to be inherited by that
+-- INVOKER function. Keeping the old fence unchanged preserves its verified API;
+-- this helper is not granted to auth/runtime roles and is owned by the same
+-- dedicated NOLOGIN execution owner as mint/consume in deployment.
+CREATE FUNCTION echo_execution._assert_private_draft_fence(
+    p_issuer text,
+    p_subject text,
+    p_session_key text,
+    p_principal_id uuid,
+    p_actor_id uuid,
+    p_source_id uuid,
+    p_auth_version integer,
+    p_capability text,
+    p_token_issued_ms bigint,
+    p_token_not_before_ms bigint,
+    p_token_expires_ms bigint
+) RETURNS void
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER CALLED ON NULL INPUT
+SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    principal echo_identity.principals%ROWTYPE;
+    session_row echo_identity.sessions%ROWTYPE;
+    checked_ms bigint;
+BEGIN
+    IF p_issuer IS NULL OR length(p_issuer) NOT BETWEEN 1 AND 2048
+       OR p_subject IS NULL OR length(p_subject) NOT BETWEEN 1 AND 255
+       OR p_session_key IS NULL OR p_session_key !~ '^[a-f0-9]{64}$'
+       OR p_principal_id IS NULL OR p_actor_id IS NULL OR p_source_id IS NULL
+       OR p_principal_id = '00000000-0000-0000-0000-000000000000'::uuid
+       OR p_actor_id = '00000000-0000-0000-0000-000000000000'::uuid
+       OR p_source_id = '00000000-0000-0000-0000-000000000000'::uuid
+       OR p_auth_version IS NULL OR p_auth_version < 1
+       OR p_capability IS DISTINCT FROM 'voice:draft:create'
+       OR p_token_issued_ms IS NULL OR p_token_not_before_ms IS NULL
+       OR p_token_expires_ms IS NULL
+       OR p_token_issued_ms NOT BETWEEN 0 AND 9007199254740991
+       OR p_token_not_before_ms NOT BETWEEN 0 AND 9007199254740991
+       OR p_token_expires_ms NOT BETWEEN 0 AND 9007199254740991
+       OR p_token_issued_ms > p_token_not_before_ms
+       OR p_token_not_before_ms >= p_token_expires_ms THEN
+        RAISE EXCEPTION 'AUTHORIZATION_DENIED' USING ERRCODE = '42501';
+    END IF;
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'UNSUPPORTED_FENCE_ISOLATION' USING ERRCODE = '25001';
+    END IF;
+
+    -- Match P2.1c.2d.1 lock order exactly: principal then session.
+    SELECT * INTO principal FROM echo_identity.principals
+      WHERE principal_id = p_principal_id FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'AUTHORIZATION_DENIED' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO session_row FROM echo_identity.sessions
+      WHERE session_key = p_session_key COLLATE "C" FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'AUTHORIZATION_DENIED' USING ERRCODE = '42501';
+    END IF;
+
+    checked_ms := floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint;
+    IF principal.issuer IS DISTINCT FROM p_issuer COLLATE "C"
+       OR principal.subject IS DISTINCT FROM p_subject COLLATE "C"
+       OR principal.actor_id IS DISTINCT FROM p_actor_id
+       OR principal.source_id IS DISTINCT FROM p_source_id
+       OR principal.actor_kind <> 'HUMAN'
+       OR NOT principal.enabled OR NOT principal.writer_enabled
+       OR principal.auth_version <> p_auth_version
+       OR session_row.principal_id <> principal.principal_id
+       OR session_row.auth_version <> principal.auth_version
+       OR session_row.revoked
+       OR session_row.expires_at <= session_row.issued_at
+       OR checked_ms < ceil(extract(epoch FROM session_row.issued_at) * 1000)::bigint
+       OR checked_ms >= floor(extract(epoch FROM session_row.expires_at) * 1000)::bigint
+       OR p_token_issued_ms < ceil(extract(epoch FROM session_row.issued_at) * 1000)::bigint
+       OR checked_ms < p_token_issued_ms OR checked_ms < p_token_not_before_ms
+       OR checked_ms >= p_token_expires_ms THEN
+        RAISE EXCEPTION 'AUTHORIZATION_DENIED' USING ERRCODE = '42501';
+    END IF;
+END $$;
+
 -- Called only by a trusted authentication/command bridge after signature,
 -- registry and DTO checks. Runtime/browser code must not get EXECUTE here.
 CREATE FUNCTION echo_execution.mint_private_draft_ticket(
@@ -71,8 +152,7 @@ BEGIN
         RAISE EXCEPTION 'AUTHORIZATION_DENIED' USING ERRCODE='42501';
     END IF;
 
-    -- Existing fence locks principal then session and rechecks current DB state.
-    PERFORM echo_identity.assert_private_draft_fence(
+    PERFORM echo_execution._assert_private_draft_fence(
       p_issuer,p_subject,p_session_key,p_principal_id,p_actor_id,p_source_id,
       p_auth_version,p_capability,p_token_issued_ms,p_token_not_before_ms,p_token_expires_ms);
 
@@ -117,12 +197,11 @@ BEGIN
         RAISE EXCEPTION 'AUTHORIZATION_DENIED' USING ERRCODE='42501';
     END IF;
 
-    PERFORM echo_identity.assert_private_draft_fence(
+    PERFORM echo_execution._assert_private_draft_fence(
       ticket.issuer,ticket.subject,ticket.session_key,ticket.principal_id,
       ticket.actor_id,ticket.source_id,ticket.auth_version,ticket.capability,
       ticket.token_issued_ms,ticket.token_not_before_ms,ticket.token_expires_ms);
 
-    -- Synthetic target only: no real Voice/history row is created in this task.
     INSERT INTO echo_execution.private_draft_probe(
       command_id,ticket_id,actor_id,source_id,payload_ref,visibility,recorded_at)
     VALUES(ticket.command_id,ticket.ticket_id,ticket.actor_id,ticket.source_id,
@@ -130,7 +209,7 @@ BEGIN
 
     -- Final authority + wall-clock check on the same transaction. Any failure
     -- rolls back both the probe insert and ticket consumption.
-    PERFORM echo_identity.assert_private_draft_fence(
+    PERFORM echo_execution._assert_private_draft_fence(
       ticket.issuer,ticket.subject,ticket.session_key,ticket.principal_id,
       ticket.actor_id,ticket.source_id,ticket.auth_version,ticket.capability,
       ticket.token_issued_ms,ticket.token_not_before_ms,ticket.token_expires_ms);
@@ -144,11 +223,13 @@ BEGIN
     RETURN ticket.command_id;
 END $$;
 
+REVOKE ALL ON FUNCTION echo_execution._assert_private_draft_fence(
+  text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION echo_execution.mint_private_draft_ticket(
   uuid,uuid,text,text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION echo_execution.execute_private_draft_probe(uuid) FROM PUBLIC;
 
--- Role names/grants are deployment-specific and therefore intentionally absent.
--- Required contract: dedicated NOLOGIN definer owner has only SELECT identity,
--- EXECUTE fence, INSERT/SELECT/column-UPDATE ticket, INSERT probe; auth bridge only
--- EXECUTE mint; runtime only EXECUTE consume. CI installs exactly that grant set.
+-- Role names/grants are deployment-specific and intentionally absent. Required
+-- contract: same dedicated NOLOGIN owner owns all 3 SECURITY DEFINER functions,
+-- has SELECT identity + only required ticket/probe DML; auth bridge only EXECUTE
+-- mint; runtime only EXECUTE consume. Neither caller gets helper/raw-fence EXECUTE.

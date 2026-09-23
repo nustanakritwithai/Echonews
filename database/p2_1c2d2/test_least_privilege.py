@@ -29,6 +29,7 @@ RUNTIME = "echo_runtime_writer_test"
 AUTH_PASSWORD = "disposable_auth_bridge_only"
 RUNTIME_PASSWORD = "disposable_runtime_only"
 ISSUER = "https://identity.example.test"
+HELPER_SIG = "echo_execution._assert_private_draft_fence(text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint)"
 MINT_SIG = "echo_execution.mint_private_draft_ticket(uuid,uuid,text,text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint)"
 EXEC_SIG = "echo_execution.execute_private_draft_probe(uuid)"
 FENCE_SIG = "echo_identity.assert_private_draft_fence(text,text,text,uuid,uuid,uuid,integer,text,bigint,bigint,bigint)"
@@ -71,11 +72,11 @@ class LeastPrivilegeBoundary(unittest.TestCase):
           CREATE ROLE {OWNER} NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
           CREATE ROLE {AUTH} LOGIN PASSWORD '{AUTH_PASSWORD}' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
           CREATE ROLE {RUNTIME} LOGIN PASSWORD '{RUNTIME_PASSWORD}' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+          ALTER FUNCTION {HELPER_SIG} OWNER TO {OWNER};
           ALTER FUNCTION {MINT_SIG} OWNER TO {OWNER};
           ALTER FUNCTION {EXEC_SIG} OWNER TO {OWNER};
           GRANT USAGE ON SCHEMA echo_identity, echo_execution TO {OWNER};
           GRANT SELECT ON echo_identity.principals, echo_identity.sessions TO {OWNER};
-          GRANT EXECUTE ON FUNCTION {FENCE_SIG} TO {OWNER};
           GRANT INSERT, SELECT ON echo_execution.private_draft_tickets TO {OWNER};
           GRANT UPDATE(consumed_ms) ON echo_execution.private_draft_tickets TO {OWNER};
           GRANT INSERT ON echo_execution.private_draft_probe TO {OWNER};
@@ -149,7 +150,7 @@ class LeastPrivilegeBoundary(unittest.TestCase):
         rows = self.admin.execute("""SELECT p.proname,r.rolname,r.rolcanlogin,p.prosecdef,p.proconfig
           FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner
           WHERE n.nspname='echo_execution' ORDER BY p.proname""").fetchall()
-        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(rows), 3)
         for _, owner, canlogin, secdef, config in rows:
             self.assertEqual(owner, OWNER); self.assertFalse(canlogin); self.assertTrue(secdef)
             self.assertEqual(config, ["search_path=pg_catalog, pg_temp"])
@@ -197,11 +198,12 @@ class LeastPrivilegeBoundary(unittest.TestCase):
               VALUES(%s,1,%s,%s,'forged','PUBLIC',clock_timestamp())""",(uuid4(),f['actor'],f['source'])))
             self.assert_sqlstate(lambda: conn.execute("UPDATE echo_core.voice_revisions SET visibility='PUBLIC'"))
 
-    def test_08_runtime_cannot_call_raw_fence_or_become_definer_owner(self):
+    def test_08_runtime_cannot_call_any_fence_or_become_definer_owner(self):
         f=self.fixture()
         with connect(RUNTIME,RUNTIME_PASSWORD) as conn:
-            self.assert_sqlstate(lambda: conn.execute("SELECT echo_identity.assert_private_draft_fence(%s,%s,%s,%s,%s,%s,1,'voice:draft:create',%s,%s,%s)",
-              (ISSUER,f['subject'],f['key'],f['principal'],f['actor'],f['source'],f['iat'],f['nbf'],f['exp'])))
+            params=(ISSUER,f['subject'],f['key'],f['principal'],f['actor'],f['source'],1,'voice:draft:create',f['iat'],f['nbf'],f['exp'])
+            self.assert_sqlstate(lambda: conn.execute("SELECT echo_identity.assert_private_draft_fence(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",params))
+            self.assert_sqlstate(lambda: conn.execute("SELECT echo_execution._assert_private_draft_fence(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",params))
             self.assert_sqlstate(lambda: conn.execute(f"SET ROLE {OWNER}"))
 
     def test_09_runtime_cannot_grant_itself_or_create_execution_objects(self):
@@ -306,11 +308,13 @@ class LeastPrivilegeBoundary(unittest.TestCase):
         for row in rows:self.assertEqual(row[1:],(False,False,False,False,False))
         self.assertEqual(scalar(self.admin,"SELECT count(*) FROM pg_auth_members m JOIN pg_roles member ON member.oid=m.member WHERE member.rolname=ANY(%s)",([OWNER,AUTH,RUNTIME],)),0)
 
-    def test_23_auth_bridge_cannot_read_or_mutate_private_tables(self):
+    def test_23_auth_bridge_cannot_read_mutate_or_call_private_helper(self):
+        f=self.fixture(); params=(ISSUER,f['subject'],f['key'],f['principal'],f['actor'],f['source'],1,'voice:draft:create',f['iat'],f['nbf'],f['exp'])
         with connect(AUTH,AUTH_PASSWORD) as conn:
             for statement in ["SELECT * FROM echo_identity.principals","SELECT * FROM echo_execution.private_draft_tickets",
                               "UPDATE echo_identity.principals SET writer_enabled=true","DELETE FROM echo_execution.private_draft_tickets"]:
                 with self.subTest(statement=statement):self.assert_sqlstate(lambda s=statement:conn.execute(s))
+            self.assert_sqlstate(lambda:conn.execute("SELECT echo_execution._assert_private_draft_fence(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",params))
 
     def test_24_ticket_ttl_is_capped_and_command_is_bound_at_mint(self):
         f=self.fixture();ticket,command,payload=self.mint(f)
@@ -327,10 +331,11 @@ class LeastPrivilegeBoundary(unittest.TestCase):
         finally:self.admin.execute("RESET ROLE")
 
     def test_26_public_execute_is_revoked_and_grants_are_split(self):
-        mint_acl=scalar(self.admin,"SELECT has_function_privilege(%s,%s,'EXECUTE')",(RUNTIME,MINT_SIG))
-        run_acl=scalar(self.admin,"SELECT has_function_privilege(%s,%s,'EXECUTE')",(AUTH,EXEC_SIG))
-        owner_login=scalar(self.admin,"SELECT rolcanlogin FROM pg_roles WHERE rolname=%s",(OWNER,))
-        self.assertFalse(mint_acl);self.assertFalse(run_acl);self.assertFalse(owner_login)
+        self.assertFalse(scalar(self.admin,"SELECT has_function_privilege(%s,%s,'EXECUTE')",(RUNTIME,MINT_SIG)))
+        self.assertFalse(scalar(self.admin,"SELECT has_function_privilege(%s,%s,'EXECUTE')",(AUTH,EXEC_SIG)))
+        self.assertFalse(scalar(self.admin,"SELECT has_function_privilege(%s,%s,'EXECUTE')",(AUTH,HELPER_SIG)))
+        self.assertFalse(scalar(self.admin,"SELECT has_function_privilege(%s,%s,'EXECUTE')",(RUNTIME,HELPER_SIG)))
+        self.assertFalse(scalar(self.admin,"SELECT rolcanlogin FROM pg_roles WHERE rolname=%s",(OWNER,)))
 
 
 if __name__ == "__main__":
