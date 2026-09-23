@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import time
 import unittest
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import jwt
 import psycopg
@@ -125,6 +125,10 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
             self.now - 3, self.now - 2, self.now + 120, self.now + 90)
         self.session_key = derive_session_key(ISSUER, self.jti)
         self._provision()
+        # The suite intentionally shares one disposable DB so successful earlier tests
+        # can leave immutable history behind. Failure cases assert against THIS test's
+        # starting count rather than incorrectly assuming a globally empty table.
+        self.voice_count_before = self.voice_count()
         self.payloads = {}
         self.stored_calls = []
         self.discarded = []
@@ -176,6 +180,12 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         with self.connect() as c:
             return c.execute(sql, params).fetchone()
 
+    def voice_count(self):
+        return self.db_one("SELECT count(*) FROM echo_core.voice_revisions")[0]
+
+    def assert_no_new_voice(self):
+        self.assertEqual(self.voice_count(), self.voice_count_before)
+
     def test_01_signed_bound_intent_executes_one_private_revision(self):
         intent = self.bind()
         receipt = self.executor.execute(intent)
@@ -188,6 +198,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         self.assertEqual(row[7], receipt.recorded_at)
         self.assertEqual(receipt.revision, 1)
         self.assertEqual(receipt.visibility, "PRIVATE")
+        self.assertEqual(self.voice_count(), self.voice_count_before + 1)
 
     def test_02_browser_json_cannot_supply_execution_authority_or_write_fields(self):
         attempts = [
@@ -208,12 +219,14 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
                     self.bind(draft_body(top=top, payload=payload))
                 self.assertEqual(ctx.exception.code, "INVALID_COMMAND")
         self.assertEqual(self.stored_calls, [])
+        self.assert_no_new_voice()
 
     def test_03_json_shaped_dict_cannot_call_executor(self):
         self.execute_error({"command": "CREATE_VOICE_DRAFT",
                             "authorization_stamp": {"actor_id": str(self.actor_id)}},
                            "INVALID_SERVER_INTENT")
         self.assertEqual(self.stored_calls, [])
+        self.assert_no_new_voice()
 
     def test_04_voice_id_and_payload_ref_are_server_owned(self):
         intent = self.bind(draft_body("exact author text"))
@@ -222,6 +235,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         self.assertEqual(self.stored_calls[0][0], receipt.voice_id)
         self.assertEqual(self.stored_calls[0][1], "exact author text")
         self.assertEqual(self.stored_calls[0][2], "payload:private:" + receipt.voice_id.hex)
+        self.assertEqual(self.voice_count(), self.voice_count_before + 1)
 
     def test_05_mismatched_server_stamp_is_rejected_before_payload_store(self):
         intent = self.bind()
@@ -229,6 +243,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         self.execute_error(dataclasses.replace(intent, authorization_stamp=forged),
                            "AUTHORIZATION_STAMP_MISMATCH")
         self.assertEqual(self.stored_calls, [])
+        self.assert_no_new_voice()
 
     def test_06_non_draft_capability_cannot_enter_private_writer(self):
         intent = self.bind()
@@ -236,16 +251,19 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         self.execute_error(dataclasses.replace(intent, authorization_stamp=forged),
                            "CAPABILITY_MISMATCH")
         self.assertEqual(self.stored_calls, [])
+        self.assert_no_new_voice()
 
     def test_07_missing_durable_stamp_is_not_executable(self):
         intent = dataclasses.replace(self.bind(), authorization_stamp=None)
         self.execute_error(intent, "AUTHORIZATION_STAMP_REQUIRED")
         self.assertEqual(self.stored_calls, [])
+        self.assert_no_new_voice()
 
     def test_08_review_intent_is_not_a_private_voice_execution(self):
         intent = self.bind(review_body())
         self.execute_error(intent, "UNSUPPORTED_SERVER_INTENT")
         self.assertEqual(self.stored_calls, [])
+        self.assert_no_new_voice()
 
     def test_09_revoke_after_bind_is_denied_at_db_writer_and_payload_compensated(self):
         intent = self.bind()
@@ -255,7 +273,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         self.execute_error(intent, "PRIVATE_VOICE_WRITE_REJECTED")
         self.assertEqual(self.payloads, {})
         self.assertEqual(len(self.discarded), 1)
-        self.assertEqual(self.db_one("SELECT count(*) FROM echo_core.voice_revisions")[0], 0)
+        self.assert_no_new_voice()
 
     def test_10_role_change_after_bind_is_denied_and_payload_compensated(self):
         intent = self.bind()
@@ -265,7 +283,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
                       (self.principal_id,))
         self.execute_error(intent, "PRIVATE_VOICE_WRITE_REJECTED")
         self.assertEqual(self.payloads, {})
-        self.assertEqual(self.db_one("SELECT count(*) FROM echo_core.voice_revisions")[0], 0)
+        self.assert_no_new_voice()
 
     def test_11_payload_store_failure_happens_before_any_database_write(self):
         def fail_store(*_):
@@ -274,14 +292,14 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         with self.assertRaises(PrivateVoiceExecutionError) as ctx:
             executor.execute(self.bind())
         self.assertEqual(ctx.exception.code, "PAYLOAD_STORE_UNAVAILABLE")
-        self.assertEqual(self.db_one("SELECT count(*) FROM echo_core.voice_revisions")[0], 0)
+        self.assert_no_new_voice()
 
     def test_12_invalid_payload_ref_contract_never_reaches_database_writer(self):
         executor = PrivateVoiceExecutor(self.runtime_connection, lambda *_: "   ", self.discard_payload)
         with self.assertRaises(PrivateVoiceExecutionError) as ctx:
             executor.execute(self.bind())
         self.assertEqual(ctx.exception.code, "PAYLOAD_STORE_CONTRACT_VIOLATION")
-        self.assertEqual(self.db_one("SELECT count(*) FROM echo_core.voice_revisions")[0], 0)
+        self.assert_no_new_voice()
 
     def test_13_executor_rejects_owner_connection_instead_of_silently_using_privilege(self):
         executor = PrivateVoiceExecutor(self.connect, self.store_payload, self.discard_payload)
@@ -290,7 +308,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "RUNTIME_ROLE_REQUIRED")
         self.assertEqual(self.payloads, {})
         self.assertEqual(len(self.discarded), 1)
-        self.assertEqual(self.db_one("SELECT count(*) FROM echo_core.voice_revisions")[0], 0)
+        self.assert_no_new_voice()
 
     def test_14_signed_actor_role_hints_cannot_change_written_author_or_visibility(self):
         token = self.token({"actor_id": str(uuid4()), "source_id": str(uuid4()),
@@ -299,6 +317,7 @@ class PrivateVoiceExecutorTests(unittest.TestCase):
         row = self.db_one("SELECT author_id,source_id,visibility FROM echo_core.voice_revisions WHERE voice_id=%s",
                           (receipt.voice_id,))
         self.assertEqual(row, (self.actor_id, self.source_id, "PRIVATE"))
+        self.assertEqual(self.voice_count(), self.voice_count_before + 1)
 
 
 if __name__ == "__main__":
