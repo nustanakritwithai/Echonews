@@ -92,8 +92,12 @@ class PrincipalPool:
               pg_catalog.has_schema_privilege(%s,n.oid,'CREATE') OR
               pg_catalog.has_schema_privilege(%s,n.oid,'CREATE')))''',
             (SERVICE,['echo_identity','echo_core','public'],SERVICE,RUNTIME), prepare=False).fetchone()[0]
+        # Compare catalog-rendered identity, rather than resolving an input
+        # regprocedure name: SERVICE intentionally has no echo_identity USAGE.
         sealed = c.execute('''SELECT r.rolname,p.prosecdef,p.proconfig FROM pg_catalog.pg_proc p
-            JOIN pg_catalog.pg_roles r ON r.oid=p.proowner WHERE p.oid=%s::regprocedure''',
+            JOIN pg_catalog.pg_roles r ON r.oid=p.proowner
+            JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+            WHERE n.nspname='echo_identity' AND p.oid::regprocedure::text=%s''',
             (FUNCTION,), prepare=False).fetchone()
         if direct or create or sealed is None or sealed[0:2] != (GUARD, True):
             raise PrincipalPoolError('SERVICE_PRIVILEGE_DRIFT')
