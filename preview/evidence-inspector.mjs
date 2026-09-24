@@ -1,5 +1,5 @@
 // UX-P0.2: read-only provenance navigation; never derives truth or independence.
-import {escapeHTML as esc, TYPES} from './core.mjs';
+import {escapeHTML as esc, TYPES, STORE_KEY} from './core.mjs';
 import {stateNames} from './data.mjs';
 
 // Scoped lookups: a room cannot resolve another room's Claim/Evidence/Voice.
@@ -101,6 +101,23 @@ export function createEvidenceInspector({dialog, rooms, getVoices, showModal}) {
     } else if(action==='evidence')go('evidence',{evidenceId:button.dataset.id,voiceId:null});
     else if(action==='source')go('source',{evidenceId:button.dataset.evidence,voiceId:button.dataset.id});
   }
+  // Native dialog keeps the page inert; explicitly wrap Tab at the modal edges
+  // so keyboard navigation cannot move into browser chrome in tested Chromium.
+  function keydown(event) {
+    if (!active || !dialog.open || event.key !== 'Tab') return;
+    const controls=[...dialog.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
+      .filter(el=>el.getClientRects().length && !el.closest('[hidden],[inert]'));
+    if (!controls.length) {event.preventDefault();dialog.querySelector('#modal-title')?.focus();return;}
+    const index=controls.indexOf(document.activeElement);
+    if (event.shiftKey && index<=0) {event.preventDefault();controls.at(-1).focus();}
+    else if (!event.shiftKey && index===controls.length-1) {event.preventDefault();controls[0].focus();}
+  }
+  dialog.addEventListener('keydown',keydown);
+  // A change from another tab invalidates the read snapshot. Close only this
+  // inspector, never a compose form, before stale local text can remain visible.
+  window.addEventListener('storage',event=>{
+    if (active && (event.key===STORE_KEY || event.key===null)) close();
+  });
   dialog.addEventListener('click',click);
   dialog.addEventListener('close',()=>{
     active=false;context=null;remembered.clear();dialog.classList.remove('evidence-inspector');
