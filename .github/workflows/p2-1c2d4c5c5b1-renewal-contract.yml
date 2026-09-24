@@ -1,0 +1,58 @@
+name: P2.1c.2d.4c.5c.5b.1 Renewal Contract Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c5b1/**'
+      - '.github/workflows/p2-1c2d4c5c5b1-renewal-contract.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c5b1/**'
+      - '.github/workflows/p2-1c2d4c5c5b1-renewal-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renewal-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Record source and runtime
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2d4c5c5b1
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c5b1/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c5b1/python.txt
+          sha256sum \
+            backend/p2_1c2d4c5c5b1/README_TH.md \
+            backend/p2_1c2d4c5c5b1/renewal_contract.py \
+            backend/p2_1c2d4c5c5b1/test_renewal_contract.py \
+            | tee verification/p2_1c2d4c5c5b1/source-sha256.txt
+      - name: Execute deterministic renewal contract
+        env:
+          PYTHONPATH: backend/p2_1c2d4c5c5b1
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2d4c5c5b1/renewal_contract.py \
+            backend/p2_1c2d4c5c5b1/test_renewal_contract.py
+          python backend/p2_1c2d4c5c5b1/test_renewal_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c5b1/contract-tests.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d4c5c5b1/contract-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c5b1/contract-tests.txt
+      - name: Retain contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c5b1-renewal-contract-evidence
+          path: verification/p2_1c2d4c5c5b1/
+          if-no-files-found: warn
