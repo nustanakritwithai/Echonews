@@ -1,0 +1,71 @@
+name: P2.1c.2d.4c.1 Owner Read Service Pool Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d4c/**', 'backend/p2_1c2d4b/**', 'backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/**', '.github/workflows/p2-1c2d4c-owner-read-pool.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d4c/**', 'backend/p2_1c2d4b/**', 'backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/**', '.github/workflows/p2-1c2d4c-owner-read-pool.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  owner-read-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_owner_read_pool_test
+          POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256'
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_owner_read_pool_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_owner_read_pool_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      ECHO_POOL_RESULTS: verification/p2_1c2d4c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install and record exact runtime
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4c
+          git rev-parse HEAD | tee verification/p2_1c2d4c/checkout.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4c/postgres.txt
+          python --version | tee verification/p2_1c2d4c/python.txt
+          sha256sum backend/p2_1c2d4c/*py database/p2_1c2d4c/*sql > verification/p2_1c2d4c/source-sha256.txt
+      - name: Preserve signed-token regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2d4c/identity \
+            python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/p2_1c2d4c/identity.txt
+      - name: Real service LOGIN and pooled owner read
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/p2_1c2d4c/*.py
+          python backend/p2_1c2d4c/test_owner_read_pool.py 2>&1 | tee verification/p2_1c2d4c/pool.txt
+          grep -q 'P2_1C2D4C1_OWNER_READ_POOL_SAT' verification/p2_1c2d4c/pool.txt
+          grep -q 'CLEAN_OWNER_READ_POOL_DATABASE' verification/p2_1c2d4c/pool.txt
+      - name: Retain evidence, never service credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c-owner-read-pool-evidence
+          path: verification/p2_1c2d4c/
+          if-no-files-found: warn
