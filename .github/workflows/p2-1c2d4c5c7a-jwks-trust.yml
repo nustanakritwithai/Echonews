@@ -1,0 +1,58 @@
+name: P2.1c.2d.4c.5c.7a JWKS Trust Contract Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - '.github/workflows/p2-1c2d4c5c7a-jwks-trust.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - '.github/workflows/p2-1c2d4c5c7a-jwks-trust.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jwks-trust-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Record source and runtime
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2d4c5c7a
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c7a/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c7a/python.txt
+          sha256sum \
+            backend/p2_1c2d4c5c7a/README_TH.md \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            | tee verification/p2_1c2d4c5c7a/source-sha256.txt
+      - name: Execute deterministic JWKS trust contract
+        env:
+          PYTHONPATH: backend/p2_1c2d4c5c7a
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py
+          python backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c7a/contract-tests.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d4c5c7a/contract-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7a/contract-tests.txt
+      - name: Retain contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c7a-jwks-trust-contract-evidence
+          path: verification/p2_1c2d4c5c7a/
+          if-no-files-found: warn
