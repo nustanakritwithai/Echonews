@@ -1,0 +1,106 @@
+name: P2.1c.2d.4c.5c.1 Signed Principal Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d4c5c1/**', 'backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'database/**', '.github/workflows/p2-1c2d4c5c1-signed-principal.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d4c5c1/**', 'backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'database/**', '.github/workflows/p2-1c2d4c5c1-signed-principal.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-principal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_account_link_signed_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_account_link_signed_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_account_link_signed_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2d4c5b:backend/p2_1c2d4c5c1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare real runtime and source evidence
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5b/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/signed-principal
+          git rev-parse HEAD | tee verification/signed-principal/checkout-sha.txt
+          python --version | tee verification/signed-principal/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/signed-principal/postgres.txt
+          git ls-files -z backend database .github/workflows/p2-1c2d4c5c1-signed-principal.yml | xargs -0 sha256sum > verification/signed-principal/source-sha256.txt
+          python -m py_compile backend/p2_1c2d4c5c1/*.py
+      - name: Original signed verifier regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/signed-principal/token-results python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/signed-principal/token.txt
+      - name: Original durable proof regression
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_account_link_proof_test;'
+          for f in database/p2_1b/schema.sql database/p2_1c2c/001_identity_registry.sql database/p2_1c2d4c3/001_registry_service.sql database/p2_1c2d4c4/001_identity_mutation_service.sql database/p2_1c2d4c5a/001_account_link_proof.sql; do
+            PGDATABASE=echo_account_link_proof_test psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+          PGDATABASE=echo_account_link_proof_test python -m unittest -v backend/p2_1c2d4c5a/test_account_link_proof.py 2>&1 | tee verification/signed-principal/proof.txt
+          grep -q 'Ran 20 tests' verification/signed-principal/proof.txt
+          grep -q '^OK$' verification/signed-principal/proof.txt
+          grep -q 'CLEAN_ACCOUNT_LINK_PROOF_DATABASE' verification/signed-principal/proof.txt
+      - name: Original signed account-link precommit regression
+        run: |
+          set -euo pipefail
+          for f in database/p2_1b/schema.sql database/p2_1c2c/001_identity_registry.sql database/p2_1c2d4c3/001_registry_service.sql database/p2_1c2d4c4/001_identity_mutation_service.sql database/p2_1c2d4c5a/001_account_link_proof.sql database/p2_1c2d4c5b/001_signed_account_link_service.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+          python -m unittest -v backend/p2_1c2d4c5b/test_account_link_transaction.py 2>&1 | tee verification/signed-principal/link-precommit.txt
+          grep -q 'Ran 20 tests' verification/signed-principal/link-precommit.txt
+          grep -q '^OK$' verification/signed-principal/link-precommit.txt
+          grep -q 'ACCOUNT_LINK_EXPIRY_LOCK_WAIT_OBSERVED' verification/signed-principal/link-precommit.txt
+          grep -q 'CLEAN_SIGNED_ACCOUNT_LINK_DATABASE' verification/signed-principal/link-precommit.txt
+      - name: Install isolated principal service chain
+        run: |
+          set -euo pipefail
+          test "$(psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL")" = t
+          for f in database/p2_1b/schema.sql database/p2_1c2c/001_identity_registry.sql database/p2_1c2d4c3/001_registry_service.sql database/p2_1c2d4c4/001_identity_mutation_service.sql database/p2_1c2d4c5a/001_account_link_proof.sql database/p2_1c2d4c5b/001_signed_account_link_service.sql database/p2_1c2d4c5c1/001_signed_principal_service.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: Real signed Principal provisioning integration
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5c1/test_signed_principal.py 2>&1 | tee verification/signed-principal/principal.txt
+          grep -q 'Ran 34 tests' verification/signed-principal/principal.txt
+          grep -q '^OK$' verification/signed-principal/principal.txt
+          test "$(grep -c 'PRINCIPAL_EXPIRY_LOCK_OBSERVED' verification/signed-principal/principal.txt)" = 3
+          grep -q 'CLEAN_SIGNED_PRINCIPAL_DATABASE' verification/signed-principal/principal.txt
+      - name: Independent cleanup assertion
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_principal_provision_service') IS NULL AND to_regrole('echo_principal_provision_runtime') IS NULL AND to_regrole('echo_principal_provision_guard') IS NULL" | tee verification/signed-principal/cleanup.txt
+          grep -qx t verification/signed-principal/cleanup.txt
+      - name: Retain actual runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-principal-evidence
+          path: verification/signed-principal/
+          if-no-files-found: warn
