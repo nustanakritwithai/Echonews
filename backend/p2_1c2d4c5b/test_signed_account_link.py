@@ -152,7 +152,9 @@ class SignedAccountLinkTests(unittest.TestCase):
         with self.raw_service() as c:
             self.assertEqual(c.info.user, SERVICE)
             self.assertEqual(c.execute('SELECT session_user,current_user').fetchone(), (SERVICE, SERVICE))
-            self.assertFalse(c.execute("SELECT has_table_privilege(%s,'echo_identity.account_link_proofs','SELECT')",
+            self.assertFalse(c.execute("""SELECT has_table_privilege(%s,t.oid,'SELECT')
+                FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+                WHERE n.nspname='echo_identity' AND t.relname='account_link_proofs'""",
                                        (SERVICE,)).fetchone()[0])
             funcs = c.execute('''SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                 WHERE n.nspname='echo_identity' AND has_function_privilege(%s,p.oid,'EXECUTE')''',
