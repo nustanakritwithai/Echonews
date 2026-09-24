@@ -94,7 +94,9 @@ export function mountRoomV2(root, {onLayerChange=()=>{}} = {}) {
     const keys={ArrowRight:(index+1)%3,ArrowLeft:(index+2)%3,Home:0,End:2};
     if (Object.hasOwn(keys,event.key)) {event.preventDefault();select(tabs[keys[event.key]].dataset.value,true);}
   }
-  let frame=0;
+  let frame=0, pointerDown=false;
+  const pressPointer=()=>{pointerDown=true;};
+  const releasePointer=()=>{pointerDown=false;};
   function updateSticky() {
     frame=0; const stuck=marker.getBoundingClientRect().top<0;
     sticky.classList.toggle('is-stuck',stuck);
@@ -103,6 +105,9 @@ export function mountRoomV2(root, {onLayerChange=()=>{}} = {}) {
   // Focused controls must not sit beneath the sticky tabs or mobile nav.
   function focusin(event) {
     const el=event.target;
+    // Moving a pointer target between down/up can swallow its native click.
+    // Only keyboard/programmatic focus needs this visibility correction.
+    if (pointerDown) return;
     if (!el.matches('button,a,summary,[role=tabpanel]') || sticky.contains(el)) return;
     const box=el.getBoundingClientRect(), bar=sticky.getBoundingClientRect();
     const bottom=document.querySelector('.bottomnav')?.getBoundingClientRect();
@@ -110,9 +115,16 @@ export function mountRoomV2(root, {onLayerChange=()=>{}} = {}) {
     const coveredBottom=bottom?.height && box.bottom>bottom.top-8;
     if (coveredTop || coveredBottom) el.scrollIntoView({block:'center',behavior:'instant'});
   }
+  root.addEventListener('pointerdown',pressPointer);
+  window.addEventListener('pointerup',releasePointer);
+  window.addEventListener('pointercancel',releasePointer);
+  window.addEventListener('blur',releasePointer);
   root.addEventListener('click',click); root.addEventListener('keydown',keydown);
   root.addEventListener('focusin',focusin); window.addEventListener('scroll',scroll,{passive:true});
   updateSticky();
-  return ()=>{root.removeEventListener('click',click);root.removeEventListener('keydown',keydown);
+  return ()=>{root.removeEventListener('pointerdown',pressPointer);
+    window.removeEventListener('pointerup',releasePointer);window.removeEventListener('pointercancel',releasePointer);
+    window.removeEventListener('blur',releasePointer);
+    root.removeEventListener('click',click);root.removeEventListener('keydown',keydown);
     root.removeEventListener('focusin',focusin);window.removeEventListener('scroll',scroll);cancelAnimationFrame(frame);};
 }
