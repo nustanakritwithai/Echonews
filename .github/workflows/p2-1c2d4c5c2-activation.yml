@@ -66,10 +66,13 @@ jobs:
           sha256sum \
             database/p2_1c2d4c5c2/001_activation_contract.sql \
             backend/p2_1c2d4c5c2/test_activation_contract.py \
+            backend/p2_1c2d4c5c2/test_activation_replay.py \
             backend/p2_1c2d4c5c2/README_TH.md \
             .github/workflows/p2-1c2d4c5c2-activation.yml \
             | tee verification/activation-contract/source-sha256.txt
-          python -m py_compile backend/p2_1c2d4c5c2/test_activation_contract.py
+          python -m py_compile \
+            backend/p2_1c2d4c5c2/test_activation_contract.py \
+            backend/p2_1c2d4c5c2/test_activation_replay.py
       - name: Install isolated activation dependency chain
         run: |
           set -euo pipefail
@@ -84,13 +87,15 @@ jobs:
             database/p2_1c2d4c5c2/001_activation_contract.sql; do
             psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
           done
-      - name: First-activation authorization and audit integration
+      - name: First-activation authorization, replay races and audit integration
         run: |
           set -euo pipefail
-          python -m unittest -v backend/p2_1c2d4c5c2/test_activation_contract.py \
+          python -m unittest -v backend/p2_1c2d4c5c2/test_activation_replay.py \
             2>&1 | tee verification/activation-contract/activation.txt
-          grep -q 'Ran 20 tests' verification/activation-contract/activation.txt
+          grep -q 'Ran 27 tests' verification/activation-contract/activation.txt
           grep -q '^OK$' verification/activation-contract/activation.txt
+          grep -q 'ACTIVATION_REPLAY_LOCK_OBSERVED identical_decisions' verification/activation-contract/activation.txt
+          grep -q 'ACTIVATION_REPLAY_LOCK_OBSERVED disable_first' verification/activation-contract/activation.txt
           grep -q 'CLEAN_ACTIVATION_CONTRACT_DATABASE' verification/activation-contract/activation.txt
           echo P2_1C2D4C5C2_ACTIVATION_SUITE_SAT | tee verification/activation-contract/SAT.txt
       - name: Independent cleanup assertion
