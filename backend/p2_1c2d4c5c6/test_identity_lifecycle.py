@@ -31,17 +31,12 @@ from principal_pool import PrincipalPool, SERVICE as PRINCIPAL_SERVICE
 from postgres_registry_adapter import PostgresRegistryAdapter, derive_session_key
 
 ISSUER = rotation_base.ISSUER
-# AccountLinkPool and PrincipalPool deliberately permit plaintext only on their
-# canonical disposable-loopback DB. Reuse that DB for this composed test and patch
-# the inherited first-session fixture before its setUpClass runs. Production TLS
-# policy is unchanged.
-DB = "echo_account_link_signed_test"
+DB = rotation_base.baseline.first_base.DB
 
 
 class BoundedIdentityLifecycleTests(rotation_base.AtomicRotationTests):
     @classmethod
     def setUpClass(cls):
-        rotation_base.baseline.first_base.DB = DB
         super().setUpClass()
         cls.lifecycle_link_password = secrets.token_urlsafe(32)
         cls.lifecycle_principal_password = secrets.token_urlsafe(32)
