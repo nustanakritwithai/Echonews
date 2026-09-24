@@ -43,7 +43,7 @@ class ActivationReplayTests(ActivationContractTests):
                 self.assertEqual(self.audit_snapshot(principal),audit)
 
     def wait_blocked(self,waiter,holder,future):
-        deadline=time.monotonic()+4
+        deadline=time.monotonic()+2
         while time.monotonic()<deadline:
             blocked=self.db('SELECT %s=ANY(pg_blocking_pids(%s))',(holder,waiter))[0]
             if blocked:
@@ -52,6 +52,24 @@ class ActivationReplayTests(ActivationContractTests):
                 self.fail('Operation returned before required Principal lock wait')
             time.sleep(0.01)
         self.fail('Expected PostgreSQL lock wait was not observed')
+
+    def wait_both_queued(self,pids,futures):
+        """Observe both requests in PostgreSQL's waiter queue.
+
+        The second waiter may be reported as blocked by the first waiter rather than
+        by the original row-lock holder, so requiring the holder PID for both is a
+        false test assumption. Non-empty pg_blocking_pids for both proves that both
+        requests reached the lock queue before the holder is released.
+        """
+        deadline=time.monotonic()+2
+        while time.monotonic()<deadline:
+            waiting=[self.db('SELECT cardinality(pg_blocking_pids(%s)) > 0',(pid,))[0] for pid in pids]
+            if all(waiting):
+                return
+            if any(f.done() for f in futures):
+                self.fail('Operation returned before both requests entered the Principal lock queue')
+            time.sleep(0.01)
+        self.fail('Both activation requests were not observed in PostgreSQL lock queues')
 
     def service_attempt(self,c,principal,decision):
         try:
@@ -73,8 +91,7 @@ class ActivationReplayTests(ActivationContractTests):
         try:
             holder.execute('SELECT principal_id FROM echo_identity.principals WHERE principal_id=%s FOR UPDATE',(principal,))
             futures=[pool.submit(self.service_attempt,c,principal,decision) for c in (first,second)]
-            self.wait_blocked(first_pid,holder.info.backend_pid,futures[0])
-            self.wait_blocked(second_pid,holder.info.backend_pid,futures[1])
+            self.wait_both_queued((first_pid,second_pid),futures)
             holder.rollback()
             results=[f.result(timeout=8) for f in futures]
             self.assertEqual([r[0] for r in results],['OK','OK'])
