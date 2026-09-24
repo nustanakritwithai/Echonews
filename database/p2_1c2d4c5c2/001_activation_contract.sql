@@ -80,15 +80,30 @@ BEGIN
     RAISE EXCEPTION 'UNSUPPORTED_ACTIVATION_ISOLATION' USING ERRCODE='25001';
   END IF;
 
-  -- Exact decision retry is the only replay path. This covers a committed DB
-  -- transaction whose acknowledgement/reset was lost without mutating twice.
+  -- Read an already-committed decision first so retarget attempts fail with a
+  -- stable conflict code. Exact replay is NOT returned yet: current Principal
+  -- authority must be locked and checked so a later disable/role change cannot
+  -- receive the historical "enabled" result.
   SELECT * INTO a FROM echo_identity.activation_audit WHERE decision_id=p_decision_id;
-  IF FOUND THEN
-    IF a.principal_id IS DISTINCT FROM p_principal_id
+  IF FOUND AND (
+       a.principal_id IS DISTINCT FROM p_principal_id
        OR a.from_auth_version <> p_expected_auth_version
        OR a.policy_code <> 'PROVEN_ACCOUNT_ONBOARDING_V1'
-       OR a.service_role <> 'echo_activation_service' THEN
-      RAISE EXCEPTION 'ACTIVATION_DECISION_CONFLICT' USING ERRCODE='23505';
+       OR a.service_role <> 'echo_activation_service'
+  ) THEN
+    RAISE EXCEPTION 'ACTIVATION_DECISION_CONFLICT' USING ERRCODE='23505';
+  END IF;
+
+  SELECT * INTO p FROM echo_identity.principals
+   WHERE principal_id=p_principal_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ACTIVATION_REJECTED' USING ERRCODE='P0002';
+  END IF;
+
+  IF a.decision_id IS NOT NULL THEN
+    IF p.auth_version <> a.to_auth_version OR NOT p.enabled
+       OR p.writer_enabled OR p.reviewer_enabled THEN
+      RAISE EXCEPTION 'ACTIVATION_REPLAY_STALE' USING ERRCODE='40001';
     END IF;
     RETURN jsonb_build_object(
       'decisionId',a.decision_id,'principalId',a.principal_id,
@@ -97,10 +112,26 @@ BEGIN
     );
   END IF;
 
-  SELECT * INTO p FROM echo_identity.principals
-   WHERE principal_id=p_principal_id FOR UPDATE;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'ACTIVATION_REJECTED' USING ERRCODE='P0002';
+  -- Another identical request may have committed while this transaction waited
+  -- on the Principal row lock. READ COMMITTED gives this statement a fresh
+  -- snapshot; re-read the durable decision before evaluating pristine state.
+  SELECT * INTO a FROM echo_identity.activation_audit WHERE decision_id=p_decision_id;
+  IF FOUND THEN
+    IF a.principal_id IS DISTINCT FROM p_principal_id
+       OR a.from_auth_version <> p_expected_auth_version
+       OR a.policy_code <> 'PROVEN_ACCOUNT_ONBOARDING_V1'
+       OR a.service_role <> 'echo_activation_service' THEN
+      RAISE EXCEPTION 'ACTIVATION_DECISION_CONFLICT' USING ERRCODE='23505';
+    END IF;
+    IF p.auth_version <> a.to_auth_version OR NOT p.enabled
+       OR p.writer_enabled OR p.reviewer_enabled THEN
+      RAISE EXCEPTION 'ACTIVATION_REPLAY_STALE' USING ERRCODE='40001';
+    END IF;
+    RETURN jsonb_build_object(
+      'decisionId',a.decision_id,'principalId',a.principal_id,
+      'authVersion',a.to_auth_version,'enabled',true,
+      'writerEnabled',false,'reviewerEnabled',false,'replayed',true
+    );
   END IF;
 
   -- This service is only for the initial disabled -> enabled/read-only transition.
@@ -180,7 +211,7 @@ ALTER ROLE echo_activation_service SET idle_in_transaction_session_timeout='10s'
 COMMENT ON TABLE echo_identity.activation_audit IS
   'Append-only runtime audit for first account activation. One row per Principal and one exact decision id.';
 COMMENT ON FUNCTION echo_identity.runtime_activate_provisioned_principal(uuid,uuid,integer) IS
-  'c5c.2 dedicated internal policy activation: proof-provisioned auth_version 1 -> enabled/read-only auth_version 2; exact decision retry only; no Session.';
+  'c5c.2 dedicated internal policy activation: proof-provisioned auth_version 1 -> enabled/read-only auth_version 2; replay is accepted only while current authority still matches the audited result; no Session.';
 COMMENT ON ROLE echo_activation_service IS
   'Dedicated internal first-activation credential. Never a browser/user identity; no writer/reviewer/session privilege.';
 
