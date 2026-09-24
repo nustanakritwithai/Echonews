@@ -149,12 +149,14 @@ class ActivationContractTests(unittest.TestCase):
         self.assert_db_error("ACTIVATION_PROVENANCE_REQUIRED", lambda: self.activate(principal))
         self.assertEqual(self.authority(principal), (False, False, False, 1))
 
-    def test_07_principal_binding_must_match_consumed_proof(self):
-        principal, _, _ = self.fixture()
+    def test_07_proof_consumption_must_still_point_to_target_principal(self):
+        principal, proof, _ = self.fixture()
+        other_principal, _, _ = self.fixture()
         with self.admin() as c:
-            other_source = c.execute("INSERT INTO echo_core.sources(source_id,source_kind,source_locator,origin_status,recorded_at) VALUES(gen_random_uuid(),'ACCOUNT',NULL,'UNKNOWN',clock_timestamp()) RETURNING source_id").fetchone()[0]
-            c.execute("UPDATE echo_identity.principals SET source_id=%s WHERE principal_id=%s", (other_source, principal))
+            c.execute("UPDATE echo_identity.account_link_proofs SET consumed_principal_id=%s WHERE proof_id=%s",
+                      (other_principal, proof))
         self.assert_db_error("ACTIVATION_PROVENANCE_REQUIRED", lambda: self.activate(principal))
+        self.assertEqual(self.authority(principal), (False, False, False, 1))
 
     def test_08_expected_generation_is_fixed_to_first_activation(self):
         principal, _, _ = self.fixture()
@@ -166,7 +168,8 @@ class ActivationContractTests(unittest.TestCase):
     def test_09_pre_enabled_or_privileged_principal_is_rejected(self):
         principal, _, _ = self.fixture()
         with self.admin() as c:
-            c.execute("UPDATE echo_identity.principals SET enabled=true WHERE principal_id=%s", (principal,))
+            c.execute("UPDATE echo_identity.principals SET enabled=true,auth_version=auth_version+1 WHERE principal_id=%s", (principal,))
+        self.assertEqual(self.authority(principal), (True, False, False, 2))
         self.assert_db_error("ACTIVATION_REJECTED", lambda: self.activate(principal))
 
     def test_10_legacy_mutation_runtime_cannot_bypass_activation_audit(self):
