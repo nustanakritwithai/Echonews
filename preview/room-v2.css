@@ -1,0 +1,116 @@
+/* UX-P0.1: scoped to Room; preserve feed, composer, storage and backend boundaries. */
+.room-mode .notice {font-size:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.room-mode .notice a {margin-left:auto;text-decoration:underline;text-underline-offset:3px;min-height:32px;display:flex;align-items:center}
+.room-mode .notice .error {flex-basis:100%}
+.room-v2 [hidden] {display:none!important}
+.room-back {display:inline-flex;align-items:center;min-height:44px;color:var(--muted);font-size:13px;margin:-10px 0 4px}
+.room-heading .eyebrow {font-size:10px;letter-spacing:1.3px}
+.room-heading .eyebrow span {color:var(--muted);letter-spacing:0}
+.room-heading .roomtitle {font-size:clamp(24px,2.6vw,32px);line-height:1.45;white-space:pre-line;letter-spacing:-.5px;margin:8px 0}
+.room-place {font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:16px}
+.room-place span {display:inline-block}
+.event-state {border:1px solid #465045;border-radius:18px;background:var(--panel);padding:18px;margin-bottom:18px}
+.state-title {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.state-title h2 {font-size:19px;line-height:1.4;letter-spacing:0}
+.state-title>span {font-size:10px;color:var(--muted)}
+.state-explainer {font-size:12px;color:var(--muted);margin:4px 0 12px}
+.state-metrics {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.state-metrics:has(.countered) {grid-template-columns:repeat(4,minmax(0,1fr))}
+.state-metric {display:grid;grid-template-columns:20px auto;align-items:center;justify-content:center;column-gap:6px;border:1px solid #465047;border-radius:10px;padding:10px 6px;background:#202720;color:var(--text)}
+.state-metric strong {font-size:23px;font-weight:650;line-height:1.1;font-variant-numeric:tabular-nums}
+.state-metric>span:last-child {grid-column:1/-1;font-size:12px;text-align:center;margin-top:3px}
+.metric-icon {font-size:16px;border:1px solid currentColor;border-radius:50%;line-height:18px;width:20px;text-align:center}
+.state-metric.supported .metric-icon {color:var(--teal)}
+.state-metric.disputed .metric-icon {color:var(--amber)}
+.state-metric.countered .metric-icon {color:#f2a69e}
+.state-metric.unknown .metric-icon {color:var(--text)}
+.freshness {display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:10px 0}
+.freshness strong {font-weight:500;color:var(--text)}
+.freshness-note {margin-left:auto;font-size:11px}
+.top-unknown {display:flex;align-items:flex-start;gap:10px;border-top:1px solid var(--line);padding-top:12px}
+.unknown-sign {display:grid;place-items:center;flex:none;width:26px;height:26px;border:1px solid #929e92;border-radius:9px;font-weight:650}
+.top-unknown h3 {font-size:13px;line-height:1.6;color:var(--text)}
+.top-unknown p {font-size:15px;line-height:1.65;color:var(--text);margin:2px 0 6px}
+.room-latest {border-top:1px solid var(--line);margin-top:8px}
+.room-latest summary,.room-evidence-list summary {cursor:pointer;min-height:44px;padding:11px 0;font-size:12px;line-height:1.7;color:var(--muted)}
+.room-latest summary span {float:right;color:var(--text);padding-left:4px}
+.room-latest>p {font-size:13px;margin:4px 0 8px}
+.room-sticky-marker {height:1px;pointer-events:none}
+.room-sticky {position:sticky;top:0;z-index:10;background:var(--bg);padding:4px 0 8px;box-shadow:0 8px 12px -10px #000}
+.room-compact {display:none;justify-content:space-between;align-items:center;gap:10px;padding:6px 4px 8px;color:var(--muted);font-size:10px;line-height:1.6}
+.room-compact b {font-weight:500;color:var(--text);font-size:12px}
+.room-compact .compact-freshness {text-align:right;white-space:nowrap}
+.room-sticky.is-stuck .room-compact {display:flex}
+.room-segments {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;border:1px solid var(--line);background:var(--panel);padding:4px;border-radius:13px}
+.room-segments button {min-height:52px;min-width:44px;padding:6px 4px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);line-height:1.35}
+.room-segments button span {display:block;font-size:14px;font-weight:600}
+.room-segments button small {display:block;font-size:10px;font-weight:400;margin-top:3px}
+.room-segments button[aria-selected=true] {border-color:#788d64;background:#303e27;color:var(--text)}
+.room-segments button:focus-visible {outline:3px solid var(--lime);outline-offset:-3px}
+.room-view-panel {min-height:calc(100svh - 160px);padding-top:18px;scroll-margin-top:130px}
+.room-view-panel:focus-visible {outline:2px solid var(--lime);outline-offset:-2px}
+.layer-heading {display:flex;align-items:flex-start;gap:12px;margin-bottom:12px}
+.layer-heading h2 {font-size:19px;letter-spacing:0;line-height:1.5}
+.layer-heading p {font-size:12px;color:var(--muted);margin-top:3px}
+.layer-number {font:12px/30px ui-monospace,monospace;color:var(--muted)}
+.room-v2 .claim {background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:16px;margin-bottom:10px}
+.room-v2 .claimline p {font-size:15px;line-height:1.8}
+.room-v2 .claim .small {color:var(--muted);font-size:12px;margin-top:8px}
+.room-v2 .claim .textbutton {color:var(--teal);min-height:44px;padding:10px 0;text-align:left;font-size:13px}
+.room-v2 .dot.unknown {background:#e0e6da}
+.room-v2 .state.unknown {color:var(--text)}
+.room-evidence-list {padding:0 16px;border:1px solid var(--line);border-radius:13px;margin:16px 0}
+.room-evidence-list summary {font-size:14px;color:var(--text)}
+.room-evidence-list summary span {float:right;color:var(--muted)}
+.evidence-context {font-size:13px;line-height:1.8;color:var(--muted);margin:0 0 16px}
+.room-v2 .evidencecard p {font-size:13px}
+.room-v2 .evidencecard .textbutton {min-height:44px;color:var(--teal)}
+.society-boundary {background:var(--panel);border:1px solid var(--line);padding:14px;border-radius:12px;font-size:14px;line-height:1.8;color:var(--text);margin:14px 0}
+.society-boundary span {color:var(--muted);font-size:12px}
+.room-v2 .voicegroup {min-height:64px;color:var(--muted)}
+.room-v2 .voicegroup[aria-pressed=true] {background:var(--panel2);border-color:#a3aea1}
+.room-v2 .voicegroup[aria-pressed=true] b {color:var(--text)}
+.room-v2 .voicecontent {font-size:15px;line-height:1.85}
+.room-v2 .voicetools button,.room-v2 .voicetools a,.room-v2 .clear-kind {min-height:44px;display:inline-flex;align-items:center;font-size:12px}
+.room-actions-v2 {display:flex;flex-wrap:wrap;gap:8px;margin:24px 0 8px}
+.room-actions-v2 button {min-height:44px}
+.room-local-note {color:var(--muted);font-size:12px}
+.room-v2 :is(button,a,summary) {scroll-margin-top:140px;scroll-margin-bottom:110px}
+@media(max-width:700px) {
+ .room-mode .topbar {min-height:64px;flex-wrap:nowrap;padding:8px 16px;gap:10px}
+ .room-mode .topbar .brand {font-size:23px;gap:6px}
+ .room-mode .topbar .brand img {width:24px;height:24px}
+ .room-mode .topbar .search {order:0;max-width:none;flex:1;width:0;min-width:0;padding:8px 10px;height:44px}
+ .room-mode .topbar .search .icon {width:16px;height:16px}
+ .room-mode .topbar .search input {font-size:12px}
+ .room-mode .topmeta {margin-left:0}
+ .room-mode .topmeta .avatar {width:44px;height:44px;font-size:12px}
+ .room-mode .notice {margin:8px 16px 0;padding:6px 10px;font-size:11px;gap:3px 7px}
+ .room-mode .notice a {min-height:32px}
+ .room-mode .layout {padding-top:12px}
+ .room-heading .roomtitle {font-size:23px;margin:4px 0 6px;line-height:1.45}
+ .room-place {font-size:11px;margin-bottom:12px}
+ .room-place span {display:block}
+ .event-state {padding:14px;margin-bottom:12px;border-radius:15px}
+ .state-title h2 {font-size:18px}
+ .state-title>span {font-size:9px}
+ .state-explainer {font-size:11px;margin-bottom:10px}
+ .state-metrics {gap:6px}
+ .state-metric {padding:8px 3px;column-gap:5px}
+ .state-metric strong {font-size:21px}
+ .state-metric>span:last-child {font-size:11px}
+ .freshness {font-size:11px;margin:8px 0}
+ .freshness-note {font-size:10px}
+ .top-unknown {padding-top:10px;gap:8px}
+ .top-unknown p {font-size:14px;line-height:1.7}
+ .room-latest {margin-top:6px}
+ .room-latest summary {font-size:11px}
+ .room-compact {padding-top:4px}
+ .room-view-panel {padding-top:14px}
+ .room-actions-v2 {display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:8px}
+ .room-actions-v2 .primary {font-size:13px;padding:10px}
+ .room-actions-v2 .secondary {font-size:13px;padding:10px}
+ .room-actions-v2 .ghost {grid-column:1/-1}
+}
+@media(max-height:500px) {.room-sticky.is-stuck .room-compact {display:none}}
+@media(forced-colors:active) {.room-segments button[aria-selected=true] {border:2px solid Highlight}.metric-icon {border:1px solid CanvasText}}
