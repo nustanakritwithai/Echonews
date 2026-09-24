@@ -1,0 +1,86 @@
+name: P2.1c.2d.4c.5c.5a Signed Repeat Login Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d4c5c5a/**', 'backend/p2_1c2d4c5c4/**', 'backend/p2_1c2d4c5c3/**', 'backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/**', '.github/workflows/p2-1c2d4c5c5a-repeat-login.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d4c5c5a/**', 'backend/p2_1c2d4c5c4/**', 'backend/p2_1c2d4c5c3/**', 'backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/**', '.github/workflows/p2-1c2d4c5c5a-repeat-login.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-repeat-login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_first_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_first_session_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_first_session_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d4c5b:backend/p2_1c2d4c5c3:backend/p2_1c2d4c5c4:backend/p2_1c2d4c5c5a
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare runtime and evidence
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/signed-repeat-login
+          git rev-parse HEAD | tee verification/signed-repeat-login/checkout-sha.txt
+          python --version | tee verification/signed-repeat-login/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/signed-repeat-login/postgres.txt
+          python -m py_compile backend/p2_1c2d4c5c5a/*.py
+          git ls-files -z backend database .github/workflows/p2-1c2d4c5c5a-repeat-login.yml | xargs -0 sha256sum > verification/signed-repeat-login/source-sha256.txt
+      - name: Original signed-token regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/signed-repeat-login/token-results python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/signed-repeat-login/token.txt
+      - name: Install isolated auth chain through repeat login
+        run: |
+          set -euo pipefail
+          test "$(psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL")" = t
+          for f in database/p2_1b/schema.sql database/p2_1c2c/001_identity_registry.sql database/p2_1c2d4c3/001_registry_service.sql database/p2_1c2d4c4/001_identity_mutation_service.sql database/p2_1c2d4c5a/001_account_link_proof.sql database/p2_1c2d4c5b/001_signed_account_link_service.sql database/p2_1c2d4c5c1/001_signed_principal_service.sql database/p2_1c2d4c5c2/001_activation_contract.sql database/p2_1c2d4c5c3/001_first_session_bootstrap.sql database/p2_1c2d4c5c4/001_current_session_logout.sql database/p2_1c2d4c5c5a/001_repeat_login.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: Signed repeat login plus inherited first-session/logout regression
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5c5a/test_signed_repeat_login.py 2>&1 | tee verification/signed-repeat-login/tests.txt
+          grep -q 'Ran 61 tests' verification/signed-repeat-login/tests.txt
+          grep -q '^OK$' verification/signed-repeat-login/tests.txt
+          grep -q 'CLEAN_SIGNED_REPEAT_LOGIN_DATABASE' verification/signed-repeat-login/tests.txt
+      - name: Independent catalog cleanup assertion
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_repeat_login_service') IS NULL AND to_regrole('echo_repeat_login_runtime') IS NULL AND to_regrole('echo_repeat_login_guard') IS NULL" | tee verification/signed-repeat-login/cleanup.txt
+          grep -qx t verification/signed-repeat-login/cleanup.txt
+      - name: Retain exact scoped source
+        if: always()
+        run: |
+          git archive --format=tar HEAD backend/p2_1c2d4c5c5a database/p2_1c2d4c5c5a .github/workflows/p2-1c2d4c5c5a-repeat-login.yml > verification/signed-repeat-login/scoped-source.tar
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signed-repeat-login-evidence
+          path: verification/signed-repeat-login/
+          if-no-files-found: warn
