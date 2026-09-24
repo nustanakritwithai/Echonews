@@ -1,0 +1,68 @@
+name: P2.1c.2d.4c.5c.7b.2a JWKS HTTP Envelope Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b2a/**'
+      - '.github/workflows/p2-1c2d4c5c7b2a-jwks-http-envelope.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b2a/**'
+      - '.github/workflows/p2-1c2d4c5c7b2a-jwks-http-envelope.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jwks-http-envelope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Record source and runtime
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2d4c5c7b2a
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c7b2a/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c7b2a/python.txt
+          sha256sum \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7b2a/README_TH.md \
+            backend/p2_1c2d4c5c7b2a/jwks_https_transport_contract.py \
+            backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py \
+            | tee verification/p2_1c2d4c5c7b2a/source-sha256.txt
+      - name: Execute trust and transport-envelope contracts
+        env:
+          PYTHONPATH: backend/p2_1c2d4c5c7a:backend/p2_1c2d4c5c7b2a
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7b2a/jwks_https_transport_contract.py \
+            backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py
+          python backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b2a/trust-contract-tests.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d4c5c7b2a/trust-contract-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2a/trust-contract-tests.txt
+          python backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b2a/http-envelope-tests.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c7b2a/http-envelope-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2a/http-envelope-tests.txt
+      - name: Retain transport-envelope evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c7b2a-jwks-http-envelope-evidence
+          path: verification/p2_1c2d4c5c7b2a/
+          if-no-files-found: warn
