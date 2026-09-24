@@ -38,10 +38,14 @@ def _validate_target(target: PinnedTlsTarget) -> tuple[tuple[str, int], ...]:
     if not isinstance(target, PinnedTlsTarget):
         raise TlsDialError("JWKS_TLS_TARGET_INVALID")
     parsed = urlsplit(target.url)
+    try:
+        parsed_port = parsed.port or 443
+    except ValueError:
+        raise TlsDialError("JWKS_TLS_TARGET_INVALID") from None
     if (
         parsed.scheme != "https"
         or parsed.hostname is None
-        or (parsed.port or 443) != 443
+        or parsed_port != 443
         or target.port != 443
         or target.host != parsed.hostname.lower()
         or target.server_hostname != target.host
