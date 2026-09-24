@@ -195,7 +195,11 @@ class WriterPoolTests(unittest.TestCase):
                               'SELECT * FROM echo_identity.principals'):
                 with self.subTest(statement=statement),self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     c.execute(statement)
-            self.assertFalse(c.execute("SELECT has_function_privilege(current_user,'echo_identity.runtime_get_private_payload_attempt(uuid)','EXECUTE')").fetchone()[0])
+            direct_exec = c.execute('''SELECT pg_catalog.has_function_privilege(current_user,p.oid,'EXECUTE')
+                FROM pg_catalog.pg_proc p
+                JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+                WHERE n.nspname='echo_identity' AND p.proname='runtime_get_private_payload_attempt' ''').fetchone()
+            self.assertEqual(direct_exec,(False,))
 
     def test_03_runtime_cannot_switch_to_guard_reader_public_or_owner(self):
         targets=[GUARD,OWNER_GUARD,OWNER_RUNTIME,OWNER_SERVICE,PUBLIC_READER,os.environ['PGUSER']]
