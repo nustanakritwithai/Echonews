@@ -20,6 +20,7 @@ RUNTIME = 'echo_account_link_runtime'
 GUARD = 'echo_account_link_guard'
 SCHEMAS = ('echo_identity', 'echo_core')
 ISSUE_FUNCTION = 'echo_identity.runtime_issue_account_link_proof(uuid,text,text,bigint,bigint,bigint,bigint)'
+_TEST_DATABASES = frozenset({'echo_account_link_signed_test', 'echo_first_session_test'})
 
 
 class AccountLinkPoolError(Exception):
@@ -44,7 +45,7 @@ class AccountLinkPool:
                 type(max_size) is not int or not 1 <= max_size <= 4):
             raise AccountLinkPoolError('INVALID_SERVICE_CONFIG')
         insecure_test = (allow_insecure_test_loopback is True and
-                         host == '127.0.0.1' and dbname == 'echo_account_link_signed_test')
+                         host == '127.0.0.1' and dbname in _TEST_DATABASES)
         if sslmode != 'verify-full' and not (insecure_test and sslmode == 'disable'):
             raise AccountLinkPoolError('VERIFIED_TLS_REQUIRED')
         self._dbname = dbname
