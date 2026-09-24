@@ -196,8 +196,9 @@ class SignedRepeatLoginTests(logout_base.SignedLogoutTests):
         self.assertIn('REPEAT_LOGIN_SERVICE_REQUIRED',str(caught.exception))
         with self.repeat_pool.connection() as c:
             with self.assertRaises(psycopg.Error):
-                c.execute("SELECT echo_identity.runtime_bootstrap_first_session(%s,%s,%s,%s,%s,%s)",
-                    (first_base.ISSUER,subject,key,claims['iat']*1000,claims['nbf']*1000,claims['exp']*1000)).fetchone()
+                with c.transaction():
+                    c.execute("SELECT echo_identity.runtime_bootstrap_first_session(%s,%s,%s,%s,%s,%s)",
+                        (first_base.ISSUER,subject,key,claims['iat']*1000,claims['nbf']*1000,claims['exp']*1000)).fetchone()
         self.assertEqual(self.session_count(principal),0)
 
     def test_58_concurrent_distinct_tokens_after_logout_have_one_winner(self):
