@@ -74,7 +74,7 @@ jobs:
           grep -q '^OK$' verification/p2_1c2d4c5c7b2b2a/egress-guard-tests.txt
           python backend/p2_1c2d4c5c7b2b2a/test_jwks_tls_dialer.py \
             2>&1 | tee verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
-          grep -q 'Ran 15 tests' verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
           grep -q '^OK$' verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
       - name: Retain TLS dialer evidence
         if: always()
