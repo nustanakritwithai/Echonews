@@ -1,0 +1,113 @@
+name: P2.1c.2d.4c.2 PRIVATE Writer Service Pool Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c2/**'
+      - 'database/p2_1c2d4c2/**'
+      - 'backend/p2_1c2d3d/**'
+      - 'database/p2_1c2d3d/**'
+      - '.github/workflows/p2-1c2d4c2-writer-pool.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c2/**'
+      - 'database/p2_1c2d4c2/**'
+      - 'backend/p2_1c2d3d/**'
+      - 'database/p2_1c2d3d/**'
+      - '.github/workflows/p2-1c2d4c2-writer-pool.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  writer-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_writer_pool_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_writer_pool_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_writer_pool_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d3b:backend/p2_1c2d3c:backend/p2_1c2d3d:backend/p2_1c2d4c2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture exact runtime
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c2/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4c2
+          git rev-parse HEAD | tee verification/p2_1c2d4c2/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c2/python.txt
+          python - <<'PY' | tee verification/p2_1c2d4c2/python-packages.txt
+          import psycopg, psycopg_pool
+          print('psycopg='+psycopg.__version__)
+          print('psycopg_pool='+psycopg_pool.__version__)
+          PY
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4c2/postgres.txt
+          sha256sum backend/p2_1c2d4c2/writer_pool.py \
+            backend/p2_1c2d4c2/test_writer_pool.py \
+            backend/p2_1c2d4c2/README_TH.md \
+            database/p2_1c2d4c2/001_writer_service.sql \
+            | tee verification/p2_1c2d4c2/source-sha256.txt
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_payload_recovery_test;'
+      - name: Preserve signed-token boundary regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2d4c2/token-regression \
+            python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/p2_1c2d4c2/token-regression.txt
+          grep -q '104/104 checks passed' verification/p2_1c2d4c2/token-regression.txt
+      - name: Preserve recoverable payload regression
+        env:
+          PGDATABASE: echo_payload_recovery_test
+        run: |
+          set -euo pipefail
+          python backend/p2_1c2d3d/test_recoverable_private_voice_executor.py \
+            2>&1 | tee verification/p2_1c2d4c2/payload-recovery-regression.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d4c2/payload-recovery-regression.txt
+          grep -q '^OK$' verification/p2_1c2d4c2/payload-recovery-regression.txt
+          grep -q 'P2_1C2D3D_PAYLOAD_RECOVERY_SUITE_SAT' verification/p2_1c2d4c2/payload-recovery-regression.txt
+          grep -q 'CLEAN_PAYLOAD_RECOVERY_DATABASE' verification/p2_1c2d4c2/payload-recovery-regression.txt
+      - name: Real writer service LOGIN, pool reset, idempotency and unknown-commit gate
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/p2_1c2d4c2/writer_pool.py backend/p2_1c2d4c2/test_writer_pool.py
+          ECHO_WRITER_POOL_RESULTS=verification/p2_1c2d4c2/writer-pool \
+            python backend/p2_1c2d4c2/test_writer_pool.py \
+            2>&1 | tee verification/p2_1c2d4c2/writer-pool.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c2/writer-pool.txt
+          grep -q '^OK$' verification/p2_1c2d4c2/writer-pool.txt
+          grep -q 'P2_1C2D4C2_WRITER_POOL_SAT' verification/p2_1c2d4c2/writer-pool.txt
+          grep -q 'CLEAN_WRITER_POOL_DATABASE' verification/p2_1c2d4c2/writer-pool.txt
+          python - <<'PY'
+          import json
+          p='verification/p2_1c2d4c2/writer-pool/writer-pool-results.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['status']=='SAT' and d['tests']==18 and d['failures']==0 and d['errors']==0 and d['skipped']==0
+          assert len(d['results'])==18 and all(x['status']=='SAT' for x in d['results'])
+          PY
+      - name: Retain evidence without credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c2-writer-pool-evidence
+          path: verification/p2_1c2d4c2/
+          if-no-files-found: warn
