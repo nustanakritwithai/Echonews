@@ -1,0 +1,2 @@
+-r ../p2_1c2c3/requirements.txt
+psycopg_pool==3.3.0
