@@ -302,7 +302,7 @@ class RegistryServicePoolTests(unittest.TestCase):
             c.execute('SELECT pg_advisory_lock(920031)')
         with self.pool.connection() as c:
             self.assertEqual(c.execute('SELECT pg_backend_pid()').fetchone()[0], pid)
-            self.assertNotEqual(c.execute("current_setting('application_name')").fetchone()[0],
+            self.assertNotEqual(c.execute("SELECT current_setting('application_name')").fetchone()[0],
                                 'registry-leak-fixture')
             self.assertIsNone(c.execute("SELECT to_regclass('pg_temp.registry_pool_leak')").fetchone()[0])
             self.assertEqual(c.execute('SELECT count(*) FROM pg_prepared_statements').fetchone()[0], 0)
