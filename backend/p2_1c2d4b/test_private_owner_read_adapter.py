@@ -232,13 +232,31 @@ class PrivateOwnerReadAdapterTests(unittest.TestCase):
 
     def test_06_removed_writer_capability_fails_closed(self):
         voice,_ = self.create_voice()
-        # Keep the same generation solely to isolate capability behavior; production
-        # authority changes also advance auth_version and invalidate old sessions.
+        # Authority changes must advance auth_version. Re-authenticate on a fresh
+        # session at the new generation so this test reaches the capability gate
+        # instead of merely proving that the old session became stale.
+        now = int(time.time())
+        reauthed = dict(self.identity)
+        reauthed.update({
+            "jti": "session-" + uuid4().hex,
+            "auth_version": self.identity["auth_version"] + 1,
+            "iat": now - 1,
+            "exp": now + 180,
+            "session_exp": now + 120,
+        })
+        reauthed["session_key"] = derive_session_key(ISSUER, reauthed["jti"])
         with self.connect() as c:
-            c.execute("UPDATE echo_identity.principals SET writer_enabled=false WHERE principal_id=%s",
+            c.execute("""UPDATE echo_identity.principals
+                            SET writer_enabled=false, auth_version=auth_version+1
+                          WHERE principal_id=%s""",
                       (self.identity["principal_id"],))
+            c.execute("""INSERT INTO echo_identity.sessions
+                (session_key,principal_id,auth_version,issued_at,expires_at)
+                VALUES(%s,%s,%s,to_timestamp(%s),to_timestamp(%s))""",
+                (reauthed["session_key"],reauthed["principal_id"],reauthed["auth_version"],
+                 reauthed["iat"],reauthed["session_exp"]))
         self.assert_error("CAPABILITY_REQUIRED",
-            lambda:self.reader.read("Bearer "+self.token(),self.body(voice)))
+            lambda:self.reader.read("Bearer "+self.token(reauthed),self.body(voice)))
         self.assertEqual(self.resolved_refs,[])
 
     def test_07_signed_role_actor_source_hints_cannot_override_registry(self):
