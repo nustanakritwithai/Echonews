@@ -1,0 +1,109 @@
+name: P2.1c.2d.4c.4 Identity Mutation Service Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c4/**'
+      - 'database/p2_1c2d4c4/**'
+      - '.github/workflows/p2-1c2d4c4-identity-mutation.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c4/**'
+      - 'database/p2_1c2d4c4/**'
+      - '.github/workflows/p2-1c2d4c4-identity-mutation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  identity-mutation-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_identity_mutation_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_identity_mutation_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_identity_mutation_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2d4c4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture exact runtime
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c4/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4c4
+          git rev-parse HEAD | tee verification/p2_1c2d4c4/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c4/python.txt
+          python - <<'PY' | tee verification/p2_1c2d4c4/python-packages.txt
+          import psycopg, psycopg_pool
+          print('psycopg', psycopg.__version__)
+          print('psycopg_pool', psycopg_pool.__version__)
+          PY
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4c4/postgres.txt
+          sha256sum \
+            backend/p2_1c2d4c4/mutation_pool.py \
+            backend/p2_1c2d4c4/identity_mutation_service.py \
+            backend/p2_1c2d4c4/test_identity_mutation_service.py \
+            database/p2_1c2d4c4/001_identity_mutation_service.sql \
+            | tee verification/p2_1c2d4c4/source-sha256.txt
+      - name: Preserve signed-token boundary regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2d4c4/token-regression \
+            python backend/p2_1c2b1/run_checks.py \
+            2>&1 | tee verification/p2_1c2d4c4/token-regression.txt
+      - name: Preserve original signed-registry integration
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_signed_registry_test;'
+          PGDATABASE=echo_signed_registry_test psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1b/schema.sql
+          PGDATABASE=echo_signed_registry_test psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2c/001_identity_registry.sql
+          PGDATABASE=echo_signed_registry_test python -m unittest -v backend/p2_1c2c3/test_signed_registry_integration.py \
+            2>&1 | tee verification/p2_1c2d4c4/original-signed-registry.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d4c4/original-signed-registry.txt
+          grep -q '^OK$' verification/p2_1c2d4c4/original-signed-registry.txt
+      - name: Install registry lookup dependency and mutation boundary
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1b/schema.sql
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2c/001_identity_registry.sql
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2d4c3/001_registry_service.sql
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2d4c4/001_identity_mutation_service.sql
+      - name: Real mutation service LOGIN, pool and idempotent mutation contract
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2d4c4/mutation_pool.py \
+            backend/p2_1c2d4c4/identity_mutation_service.py \
+            backend/p2_1c2d4c4/test_identity_mutation_service.py
+          python -m unittest -v backend/p2_1c2d4c4/test_identity_mutation_service.py \
+            2>&1 | tee verification/p2_1c2d4c4/identity-mutation.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d4c4/identity-mutation.txt
+          grep -q '^OK$' verification/p2_1c2d4c4/identity-mutation.txt
+          grep -q 'CLEAN_IDENTITY_MUTATION_DATABASE' verification/p2_1c2d4c4/identity-mutation.txt
+      - name: Retain evidence without service credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c4-identity-mutation-evidence
+          path: verification/p2_1c2d4c4/
+          if-no-files-found: warn
