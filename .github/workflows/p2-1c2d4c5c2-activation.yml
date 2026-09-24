@@ -1,0 +1,109 @@
+name: P2.1c.2d.4c.5c.2 Activation Authorization Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c2/**'
+      - 'database/p2_1c2d4c5c2/**'
+      - 'database/p2_1c2d4c5c1/**'
+      - 'database/p2_1c2d4c5a/**'
+      - 'database/p2_1c2d4c4/**'
+      - '.github/workflows/p2-1c2d4c5c2-activation.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c2/**'
+      - 'database/p2_1c2d4c5c2/**'
+      - 'database/p2_1c2d4c5c1/**'
+      - 'database/p2_1c2d4c5a/**'
+      - 'database/p2_1c2d4c4/**'
+      - '.github/workflows/p2-1c2d4c5c2-activation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  activation-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_activation_contract_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_activation_contract_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_activation_contract_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare exact runtime evidence
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5c2/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/activation-contract
+          git rev-parse HEAD | tee verification/activation-contract/checkout-sha.txt
+          python --version | tee verification/activation-contract/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/activation-contract/postgres.txt
+          python - <<'PY' | tee verification/activation-contract/psycopg.txt
+          import psycopg
+          print(psycopg.__version__)
+          PY
+          sha256sum \
+            database/p2_1c2d4c5c2/001_activation_contract.sql \
+            backend/p2_1c2d4c5c2/test_activation_contract.py \
+            backend/p2_1c2d4c5c2/README_TH.md \
+            .github/workflows/p2-1c2d4c5c2-activation.yml \
+            | tee verification/activation-contract/source-sha256.txt
+          python -m py_compile backend/p2_1c2d4c5c2/test_activation_contract.py
+      - name: Install isolated activation dependency chain
+        run: |
+          set -euo pipefail
+          for f in \
+            database/p2_1b/schema.sql \
+            database/p2_1c2c/001_identity_registry.sql \
+            database/p2_1c2d4c3/001_registry_service.sql \
+            database/p2_1c2d4c4/001_identity_mutation_service.sql \
+            database/p2_1c2d4c5a/001_account_link_proof.sql \
+            database/p2_1c2d4c5b/001_signed_account_link_service.sql \
+            database/p2_1c2d4c5c1/001_signed_principal_service.sql \
+            database/p2_1c2d4c5c2/001_activation_contract.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: First-activation authorization and audit integration
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5c2/test_activation_contract.py \
+            2>&1 | tee verification/activation-contract/activation.txt
+          grep -q 'Ran 20 tests' verification/activation-contract/activation.txt
+          grep -q '^OK$' verification/activation-contract/activation.txt
+          grep -q 'CLEAN_ACTIVATION_CONTRACT_DATABASE' verification/activation-contract/activation.txt
+          echo P2_1C2D4C5C2_ACTIVATION_SUITE_SAT | tee verification/activation-contract/SAT.txt
+      - name: Independent cleanup assertion
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_activation_service') IS NULL" \
+            | tee verification/activation-contract/cleanup.txt
+          grep -qx t verification/activation-contract/cleanup.txt
+      - name: Retain actual runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c2-activation-evidence
+          path: verification/activation-contract/
+          if-no-files-found: warn
