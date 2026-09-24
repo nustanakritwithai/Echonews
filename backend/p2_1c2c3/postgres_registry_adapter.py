@@ -50,7 +50,14 @@ class PostgresRegistryAdapter:
 
     connect() must return a fresh psycopg-compatible connection to the authoritative
     database. This reference deliberately performs no local authorization cache.
+
+    The lookup SQL is a class-level sealed contract so a later least-privilege
+    service adapter can reuse the exact snapshot decoder while calling a dedicated
+    backend-only wrapper. It is not request-configurable.
     """
+
+    _LOOKUP_SQL = """SELECT echo_identity.lookup_session(%s,%s,%s),
+                              floor(extract(epoch FROM clock_timestamp())*1000)::bigint"""
 
     def __init__(self, connect: Callable[[], object]):
         if not callable(connect):
@@ -61,11 +68,7 @@ class PostgresRegistryAdapter:
         key = derive_session_key(issuer, jti)
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """SELECT echo_identity.lookup_session(%s,%s,%s),
-                              floor(extract(epoch FROM clock_timestamp())*1000)::bigint""",
-                    (issuer, subject, key),
-                )
+                cursor.execute(self._LOOKUP_SQL, (issuer, subject, key))
                 row = cursor.fetchone()
         if row is None or row[0] is None:
             return None

@@ -1,0 +1,112 @@
+name: P2.1c.2d.4c.3 Registry Service Pool Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2c3/postgres_registry_adapter.py'
+      - 'backend/p2_1c2d4c3/**'
+      - 'database/p2_1c2d4c3/**'
+      - '.github/workflows/p2-1c2d4c3-registry-pool.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2c3/postgres_registry_adapter.py'
+      - 'backend/p2_1c2d4c3/**'
+      - 'database/p2_1c2d4c3/**'
+      - '.github/workflows/p2-1c2d4c3-registry-pool.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  registry-service-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_registry_pool_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_registry_pool_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_registry_pool_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d4c3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture exact runtime
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4c3
+          git rev-parse HEAD | tee verification/p2_1c2d4c3/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c3/python.txt
+          python - <<'PY' | tee verification/p2_1c2d4c3/python-packages.txt
+          import psycopg, psycopg_pool
+          print('psycopg', psycopg.__version__)
+          print('psycopg_pool', psycopg_pool.__version__)
+          PY
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4c3/postgres.txt
+          sha256sum \
+            backend/p2_1c2c3/postgres_registry_adapter.py \
+            backend/p2_1c2d4c3/registry_pool.py \
+            backend/p2_1c2d4c3/service_registry_adapter.py \
+            backend/p2_1c2d4c3/test_registry_pool.py \
+            database/p2_1c2d4c3/001_registry_service.sql \
+            | tee verification/p2_1c2d4c3/source-sha256.txt
+      - name: Preserve signed-token boundary regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2d4c3/token-regression \
+            python backend/p2_1c2b1/run_checks.py \
+            2>&1 | tee verification/p2_1c2d4c3/token-regression.txt
+      - name: Preserve original signed-registry integration on owner fixture
+        run: |
+          set -euo pipefail
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_signed_registry_test;'
+          PGDATABASE=echo_signed_registry_test psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1b/schema.sql
+          PGDATABASE=echo_signed_registry_test psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2c/001_identity_registry.sql
+          PGDATABASE=echo_signed_registry_test python -m unittest -v backend/p2_1c2c3/test_signed_registry_integration.py \
+            2>&1 | tee verification/p2_1c2d4c3/original-signed-registry.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d4c3/original-signed-registry.txt
+          grep -q '^OK$' verification/p2_1c2d4c3/original-signed-registry.txt
+      - name: Install isolated registry service contract
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1b/schema.sql
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2c/001_identity_registry.sql
+          psql -X -v ON_ERROR_STOP=1 --single-transaction -f database/p2_1c2d4c3/001_registry_service.sql
+      - name: Real registry service LOGIN and pooled lookup
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2c3/postgres_registry_adapter.py \
+            backend/p2_1c2d4c3/registry_pool.py \
+            backend/p2_1c2d4c3/service_registry_adapter.py \
+            backend/p2_1c2d4c3/test_registry_pool.py
+          python -m unittest -v backend/p2_1c2d4c3/test_registry_pool.py \
+            2>&1 | tee verification/p2_1c2d4c3/registry-pool.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c3/registry-pool.txt
+          grep -q '^OK$' verification/p2_1c2d4c3/registry-pool.txt
+          grep -q 'CLEAN_REGISTRY_POOL_DATABASE' verification/p2_1c2d4c3/registry-pool.txt
+      - name: Retain evidence without service credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c3-registry-service-pool-evidence
+          path: verification/p2_1c2d4c3/
+          if-no-files-found: warn
