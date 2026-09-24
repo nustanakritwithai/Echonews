@@ -32,6 +32,7 @@ jobs:
           node --check preview/app.mjs
           node --check preview/room-v2.mjs
           node --check preview/evidence-inspector.mjs
+          node --check preview/feed-v2.mjs
           npm test 2>&1 | tee verification/main-core.txt
       - uses: actions/setup-python@v5
         with:
@@ -48,12 +49,13 @@ jobs:
           node --test preview/tests/core.test.mjs 2>&1 | tee verification/preview-core.txt
           node --test preview/tests/room-v2.test.mjs 2>&1 | tee verification/room-v2-unit.txt
           node --test preview/tests/evidence-inspector.test.mjs 2>&1 | tee verification/inspector-unit.txt
-      - name: Alternative preview browser integration and Evidence Inspector
+          node --test preview/tests/feed-v2.test.mjs 2>&1 | tee verification/feed-v2-unit.txt
+      - name: Alternative preview browser integration and Event Feed
         env:
           ECHO_USE_BUNDLED_BROWSER: '1'
         run: |
           set -euo pipefail
-          python preview/tests/evidence_inspector_test.py 2>&1 | tee verification/inspector-browser.txt
+          python preview/tests/feed_v2_test.py 2>&1 | tee verification/feed-v2-browser.txt
       - name: Keep verification artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -67,7 +69,7 @@ jobs:
         run: |
           mkdir -p _site/preview
           cp index.html style.css app.js core.js data.js favicon.svg .nojekyll _site/
-          cp preview/index.html preview/styles.css preview/app.mjs preview/core.mjs preview/data.mjs preview/icon.svg preview/.nojekyll preview/room-v2.mjs preview/room-v2.css preview/evidence-inspector.mjs preview/evidence-inspector.css _site/preview/
+          cp preview/index.html preview/styles.css preview/app.mjs preview/core.mjs preview/data.mjs preview/icon.svg preview/.nojekyll preview/room-v2.mjs preview/room-v2.css preview/evidence-inspector.mjs preview/evidence-inspector.css preview/feed-v2.mjs preview/feed-v2.css _site/preview/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
