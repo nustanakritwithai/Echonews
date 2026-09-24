@@ -74,7 +74,9 @@ jobs:
           set -euo pipefail
           ECHO_IDENTITY_RESULTS=verification/p2_1c2d4c2/token-regression \
             python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/p2_1c2d4c2/token-regression.txt
-          grep -q '104/104 checks passed' verification/p2_1c2d4c2/token-regression.txt
+          grep -q 'Ran 104 tests' verification/p2_1c2d4c2/token-regression.txt
+          grep -q '^OK$' verification/p2_1c2d4c2/token-regression.txt
+          grep -q '"status": "SAT", "tests": 104, "failures": 0, "errors": 0, "skipped": 0' verification/p2_1c2d4c2/token-regression.txt
       - name: Preserve recoverable payload regression
         env:
           PGDATABASE: echo_payload_recovery_test
