@@ -1,0 +1,115 @@
+name: P2.1c.2d.4c.5c.6 Bounded Identity Lifecycle Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c6/**'
+      - 'backend/p2_1c2d4c5c5b2/**'
+      - 'backend/p2_1c2d4c5c5b1/**'
+      - 'backend/p2_1c2d4c5c5a/**'
+      - 'backend/p2_1c2d4c5c4/**'
+      - 'backend/p2_1c2d4c5c3/**'
+      - 'backend/p2_1c2d4c5c1/**'
+      - 'backend/p2_1c2d4c5b/**'
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'database/**'
+      - '.github/workflows/p2-1c2d4c5c6-lifecycle.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c6/**'
+      - 'backend/p2_1c2d4c5c5b2/**'
+      - 'backend/p2_1c2d4c5c5b1/**'
+      - 'backend/p2_1c2d4c5c5a/**'
+      - 'backend/p2_1c2d4c5c4/**'
+      - 'backend/p2_1c2d4c5c3/**'
+      - 'backend/p2_1c2d4c5c1/**'
+      - 'backend/p2_1c2d4c5b/**'
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'database/**'
+      - '.github/workflows/p2-1c2d4c5c6-lifecycle.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bounded-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_first_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_first_session_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_first_session_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d4c5b:backend/p2_1c2d4c5c1:backend/p2_1c2d4c5c3:backend/p2_1c2d4c5c4:backend/p2_1c2d4c5c5a:backend/p2_1c2d4c5c5b1:backend/p2_1c2d4c5c5b2:backend/p2_1c2d4c5c6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare runtime and exact source evidence
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/bounded-lifecycle
+          git rev-parse HEAD | tee verification/bounded-lifecycle/checkout-sha.txt
+          python --version | tee verification/bounded-lifecycle/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/bounded-lifecycle/postgres.txt
+          git ls-files -z backend contracts database .github/workflows | xargs -0 sha256sum > verification/bounded-lifecycle/source-sha256.txt
+          python -m py_compile backend/p2_1c2d4c5c6/test_identity_lifecycle.py
+      - name: Strict signed-token regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/bounded-lifecycle/token-results python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/bounded-lifecycle/token.txt
+      - name: Deterministic renewal policy regression
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5c5b1/test_renewal_contract.py 2>&1 | tee verification/bounded-lifecycle/model.txt
+          grep -q 'Ran 14 tests' verification/bounded-lifecycle/model.txt
+          grep -q '^OK$' verification/bounded-lifecycle/model.txt
+      - name: Install isolated identity lifecycle chain
+        run: |
+          set -euo pipefail
+          test "$(psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL")" = t
+          for f in database/p2_1b/schema.sql database/p2_1c2c/001_identity_registry.sql database/p2_1c2d4c3/001_registry_service.sql database/p2_1c2d4c4/001_identity_mutation_service.sql database/p2_1c2d4c5a/001_account_link_proof.sql database/p2_1c2d4c5b/001_signed_account_link_service.sql database/p2_1c2d4c5c1/001_signed_principal_service.sql database/p2_1c2d4c5c2/001_activation_contract.sql database/p2_1c2d4c5c3/001_first_session_bootstrap.sql database/p2_1c2d4c5c4/001_current_session_logout.sql database/p2_1c2d4c5c5a/001_repeat_login.sql database/p2_1c2d4c5c5b2/001_atomic_rotation.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: Bounded lifecycle integration and inherited session regressions
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5c6/test_identity_lifecycle.py 2>&1 | tee verification/bounded-lifecycle/tests.txt
+          grep -q 'Ran 95 tests' verification/bounded-lifecycle/tests.txt
+          grep -q '^OK$' verification/bounded-lifecycle/tests.txt
+          grep -q 'CLEAN_BOUNDED_IDENTITY_LIFECYCLE_DATABASE' verification/bounded-lifecycle/tests.txt
+      - name: Independent cleanup assertion
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_account_link_service') IS NULL AND to_regrole('echo_principal_provision_service') IS NULL AND to_regrole('echo_session_rotation_service') IS NULL" | tee verification/bounded-lifecycle/cleanup.txt
+          grep -qx t verification/bounded-lifecycle/cleanup.txt
+      - name: Retain exact auth source snapshot
+        if: always()
+        run: git archive --format=tar HEAD backend contracts database .github/workflows > verification/bounded-lifecycle/auth-source.tar
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bounded-identity-lifecycle-evidence
+          path: verification/bounded-lifecycle/
+          if-no-files-found: warn
