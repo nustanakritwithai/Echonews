@@ -1,55 +1,38 @@
-name: Thai News Source Probe
+name: Thai News Ingestion Gate
 on:
   pull_request:
-    paths: ['.github/workflows/thai-news-sources.yml']
+    paths: ['scripts/news/**', 'news/**', '.github/workflows/thai-news-sources.yml']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  inspect-feeds:
+  news-readiness:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Probe bounded public feed responses
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Deterministic parser and failure gates
         run: |
+          set -euo pipefail
           mkdir -p verification
-          python - <<'PY'
-          import urllib.request, urllib.parse, json, re, xml.etree.ElementTree as ET
-          urls = [
-            'https://www.infoquest.co.th/feed',
-            'https://www.infoquest.co.th/category/general/feed',
-            'https://www.infoquest.co.th/category/politics/feed',
-            'https://www.infoquest.co.th/category/economy/feed',
-            'https://www.thailand.go.th/useful-rss',
-            'https://www.thailand.go.th/rss',
-            'https://www.doh.go.th/index.php/rss',
-          ]
-          results=[]
-          for url in urls:
-            record={'url':url}
-            try:
-              request=urllib.request.Request(url,headers={'User-Agent':'EchoNews-FeedCheck/1.0 (+https://github.com/nustanakritwithai/Echonews)','Accept':'application/rss+xml, application/xml, text/xml, text/html'})
-              with urllib.request.urlopen(request,timeout=12) as response:
-                raw=response.read(1500000)
-                record.update(status=response.status,final_url=response.url,bytes=len(raw),type=response.headers.get('Content-Type'))
-              try:
-                root=ET.fromstring(raw)
-                items=root.findall('.//item')
-                record.update(root=root.tag,items=len(items),sample=[{'title':i.findtext('title','')[:100],'url':i.findtext('link'),'date':i.findtext('pubDate'),'categories':[e.text for e in i.findall('category')]} for i in items[:2]])
-              except ET.ParseError:
-                text=raw.decode('utf-8',errors='replace')
-                record['feed_links']=list(dict.fromkeys(re.findall(r'href=[\"\x27]([^\"\x27]*(?:feed|rss)[^\"\x27]*)',text,re.I)))[:20]
-            except Exception as error:
-              record['error']=str(error)[:200]
-            results.append(record)
-          print(json.dumps(results,ensure_ascii=False,indent=2))
-          open('verification/news-sources.json','w').write(json.dumps(results,ensure_ascii=False,indent=2))
-          PY
+          git rev-parse HEAD > verification/news-checkout-sha.txt
+          python scripts/news/test_collect.py 2>&1 | tee verification/news-unit.txt
+      - name: Verify actual publisher RSS without publishing
+        run: |
+          set -euo pipefail
+          python scripts/news/collect.py --bootstrap --output verification/news-readiness 2>&1 | tee verification/news-readiness.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: thai-news-source-probe
-          path: verification/news-sources.json
+          name: thai-news-readiness
+          path: |
+            verification/news-readiness/
+            verification/news-readiness.txt
+            verification/news-unit.txt
+            verification/news-checkout-sha.txt
+          retention-days: 30

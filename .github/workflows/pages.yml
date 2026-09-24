@@ -4,6 +4,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '15 1 * * *' # 08:15 Asia/Bangkok; actual start may be delayed by GitHub
 permissions:
   contents: read
 concurrency:
@@ -23,8 +25,8 @@ jobs:
         run: |
           mkdir -p verification
           git rev-parse HEAD > verification/checkout-sha.txt
-          git ls-files -z index.html app.js style.css core.js data.js preview tests .github/workflows/pages.yml docs/ux | xargs -0 sha256sum > verification/ux-source-sha256.txt
-          git archive --format=tar HEAD index.html app.js style.css core.js data.js preview tests .github/workflows/pages.yml docs/ux > verification/ux-source.tar
+          git ls-files -z index.html app.js style.css core.js data.js preview tests .github/workflows/pages.yml docs/ux scripts/news news | xargs -0 sha256sum > verification/ux-source-sha256.txt
+          git archive --format=tar HEAD index.html app.js style.css core.js data.js preview tests .github/workflows/pages.yml docs/ux scripts/news news > verification/ux-source.tar
       - name: Check JavaScript and evidence invariants
         run: |
           set -euo pipefail
@@ -56,6 +58,26 @@ jobs:
         run: |
           set -euo pipefail
           python preview/tests/feed_v2_test.py 2>&1 | tee verification/feed-v2-browser.txt
+      - name: Thai news parser and read-only page gates
+        env:
+          ECHO_USE_BUNDLED_BROWSER: '1'
+        run: |
+          set -euo pipefail
+          python scripts/news/test_collect.py 2>&1 | tee verification/news-unit.txt
+          python scripts/news/browser_test.py 2>&1 | tee verification/news-browser.txt
+      - name: Update real Thailand source reports on main only
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          python scripts/news/collect.py --output _site/news 2>&1 | tee verification/news-collection.txt
+      - name: Retain generated news and hash manifest for deployment
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-news-build
+          path: _site/news/
+          retention-days: 30
+          if-no-files-found: error
       - name: Keep verification artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -92,12 +114,17 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: echo-news-build
+          path: verification/news-build
       - name: Verify published asset content
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           python3 tests/verify_published.py
           python3 preview/tests/verify_published.py
+          python3 scripts/news/verify_published.py
       - name: Retain public URL verification
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,5 +132,6 @@ jobs:
           name: echo-published-check
           path: |
             verification/published-site.json
+            verification/news-published.json
             preview/results/published-site.json
           if-no-files-found: ignore
