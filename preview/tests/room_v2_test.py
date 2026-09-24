@@ -122,7 +122,7 @@ class RoomV2Tests(BrowserTests):
         self.page.set_viewport_size({'width':360,'height':800})
         self.go('/room/canal-demo');self.layer('society')
         self.page.evaluate("scrollTo(0,document.querySelector('.room-sticky-marker').getBoundingClientRect().top+scrollY+200)")
-        self.page.wait_for_function("document.querySelector('.room-sticky').classList.contains('is-stuck')")
+        self.page.locator('.room-sticky.is-stuck').wait_for(state='visible')
         box=self.page.locator('.room-sticky').bounding_box()
         self.assertLessEqual(abs(box['y']),2);self.assertLessEqual(box['height'],132)
         self.assertTrue(self.page.locator('.room-compact').is_visible())
@@ -147,6 +147,7 @@ class RoomV2Tests(BrowserTests):
         self.page.keyboard.press('Escape');self.page.wait_for_timeout(60)
         self.assertEqual(self.page.evaluate('document.activeElement.dataset.id'),'c1')
         self.page.locator('[data-action=claim][data-id=c3]').click()
+        self.assertTrue(self.page.locator('#modal').is_visible())
         self.assertEqual(self.page.locator('#modal .evidencecard').count(),0)
         self.assertIn('ไม่มีหลักฐาน',self.page.locator('#modal').inner_text())
 
@@ -214,7 +215,7 @@ class RoomV2Tests(BrowserTests):
 
     def test_23_local_storage_failure_does_not_claim_save_success(self):
         self.go('/room/canal-demo');before=self.page.locator('.event-state').inner_html()
-        self.page.evaluate("Storage.prototype.setItem=function(){throw new DOMException('Fixture quota','QuotaExceededError')}")
+        self.page.evaluate("() => { Storage.prototype.setItem=function(){throw new DOMException('Fixture quota','QuotaExceededError')}; }")
         self.page.locator('.bottomnav [data-action=compose]').click()
         self.page.locator('#voice-text').fill('SHOULD_NOT_SAVE')
         self.page.locator('#include-room').check()
