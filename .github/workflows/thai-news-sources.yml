@@ -1,0 +1,38 @@
+name: Thai News Ingestion Gate
+on:
+  pull_request:
+    paths: ['scripts/news/**', 'news/**', '.github/workflows/thai-news-sources.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  news-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Deterministic parser and failure gates
+        run: |
+          set -euo pipefail
+          mkdir -p verification
+          git rev-parse HEAD > verification/news-checkout-sha.txt
+          python scripts/news/test_collect.py 2>&1 | tee verification/news-unit.txt
+      - name: Verify actual publisher RSS without publishing
+        run: |
+          set -euo pipefail
+          python scripts/news/collect.py --bootstrap --output verification/news-readiness 2>&1 | tee verification/news-readiness.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: thai-news-readiness
+          path: |
+            verification/news-readiness/
+            verification/news-readiness.txt
+            verification/news-unit.txt
+            verification/news-checkout-sha.txt
+          retention-days: 30

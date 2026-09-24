@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "feeds": [
+    {"id":"infoquest-general","publisherId":"infoquest","publisherName":"สำนักข่าวอินโฟเควสท์","label":"ข่าวทั่วไป","feedUrl":"https://www.infoquest.co.th/general/feed","hosts":["www.infoquest.co.th","infoquest.co.th"],"articlePathPattern":"^/[0-9]{4}/[0-9]+/?$","policyUrl":"https://www.infoquest.co.th/using-infoquest-news-content","excludeCategories":["ต่างประเทศ","foreign","world"],"requireThaiTopic":true},
+    {"id":"infoquest-politics","publisherId":"infoquest","publisherName":"สำนักข่าวอินโฟเควสท์","label":"การเมืองไทย","feedUrl":"https://www.infoquest.co.th/politics/feed","hosts":["www.infoquest.co.th","infoquest.co.th"],"articlePathPattern":"^/[0-9]{4}/[0-9]+/?$","policyUrl":"https://www.infoquest.co.th/using-infoquest-news-content","excludeCategories":["ต่างประเทศ","foreign","world"],"requireThaiTopic":true},
+    {"id":"infoquest-economy","publisherId":"infoquest","publisherName":"สำนักข่าวอินโฟเควสท์","label":"เศรษฐกิจไทย","feedUrl":"https://www.infoquest.co.th/economy/feed","hosts":["www.infoquest.co.th","infoquest.co.th"],"articlePathPattern":"^/[0-9]{4}/[0-9]+/?$","policyUrl":"https://www.infoquest.co.th/using-infoquest-news-content","excludeCategories":["ต่างประเทศ","foreign","world"],"requireThaiTopic":true},
+    {"id":"thailand-topics","publisherId":"thailand-prd","publisherName":"Thailand.go.th / กรมประชาสัมพันธ์","label":"ข้อมูลข่าวสารภาครัฐ","feedUrl":"https://www.thailand.go.th/issue-rss?hl=th","hosts":["www.thailand.go.th","thailand.go.th"],"articlePathPattern":"^/(?:issue-focus-detail|issue-focus|issue-detail)/[^/]+/?$","policyUrl":"https://www.thailand.go.th/rss","excludeCategories":[],"requireThaiTopic":false}
+  ]
+}
