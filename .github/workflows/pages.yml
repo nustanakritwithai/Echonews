@@ -14,13 +14,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Record exact UI source identity
+        run: |
+          mkdir -p verification
+          git rev-parse HEAD > verification/checkout-sha.txt
+          git ls-files -z index.html app.js style.css core.js data.js preview tests .github/workflows/pages.yml docs/ux | xargs -0 sha256sum > verification/ux-source-sha256.txt
+          git archive --format=tar HEAD index.html app.js style.css core.js data.js preview tests .github/workflows/pages.yml docs/ux > verification/ux-source.tar
       - name: Check JavaScript and evidence invariants
         run: |
+          set -euo pipefail
           npm run check
-          npm test
+          node --check preview/app.mjs
+          node --check preview/room-v2.mjs
+          npm test 2>&1 | tee verification/main-core.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -30,12 +41,17 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Browser interaction and responsive checks
         run: python tests/browser_smoke.py
-      - name: Alternative preview core contracts
-        run: node --test preview/tests/core.test.mjs
-      - name: Alternative preview browser integration
+      - name: Alternative preview core contracts and Room summary
+        run: |
+          set -euo pipefail
+          node --test preview/tests/core.test.mjs 2>&1 | tee verification/preview-core.txt
+          node --test preview/tests/room-v2.test.mjs 2>&1 | tee verification/room-v2-unit.txt
+      - name: Alternative preview browser integration and Room V2
         env:
           ECHO_USE_BUNDLED_BROWSER: '1'
-        run: python preview/tests/browser_test.py
+        run: |
+          set -euo pipefail
+          python preview/tests/room_v2_test.py 2>&1 | tee verification/room-v2-browser.txt
       - name: Keep verification artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -49,7 +65,7 @@ jobs:
         run: |
           mkdir -p _site/preview
           cp index.html style.css app.js core.js data.js favicon.svg .nojekyll _site/
-          cp preview/index.html preview/styles.css preview/app.mjs preview/core.mjs preview/data.mjs preview/icon.svg preview/.nojekyll _site/preview/
+          cp preview/index.html preview/styles.css preview/app.mjs preview/core.mjs preview/data.mjs preview/icon.svg preview/.nojekyll preview/room-v2.mjs preview/room-v2.css _site/preview/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
