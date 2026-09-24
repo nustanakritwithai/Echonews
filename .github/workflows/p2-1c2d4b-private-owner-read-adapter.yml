@@ -1,0 +1,96 @@
+name: P2.1c.2d.4b PRIVATE Owner Read Adapter Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4b/**'
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'database/p2_1c2d4a/**'
+      - '.github/workflows/p2-1c2d4b-private-owner-read-adapter.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4b/**'
+      - 'backend/p2_1c2b1/**'
+      - 'backend/p2_1c2c3/**'
+      - 'database/p2_1c2d4a/**'
+      - '.github/workflows/p2-1c2d4b-private-owner-read-adapter.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  private-owner-read-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_private_owner_read_adapter_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_private_owner_read_adapter_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_private_owner_read_adapter_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d4b
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture versions
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4b
+          git rev-parse HEAD | tee verification/p2_1c2d4b/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4b/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4b/postgres.txt
+          sha256sum backend/p2_1c2d4b/private_owner_read_adapter.py \
+            backend/p2_1c2d4b/test_private_owner_read_adapter.py \
+            backend/p2_1c2d4b/README_TH.md | tee verification/p2_1c2d4b/source-sha256.txt
+          psql -X -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE echo_private_owner_read_test;'
+      - name: Preserve signed-token boundary regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2d4b/token-regression \
+            python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/p2_1c2d4b/token-regression.txt
+      - name: Preserve P2.1c.2d.4a database owner-read contract
+        run: |
+          set -euo pipefail
+          PGDATABASE=echo_private_owner_read_test python database/p2_1c2d4a/test_private_owner_read.py \
+            2>&1 | tee verification/p2_1c2d4b/db-owner-read-regression.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d4b/db-owner-read-regression.txt
+          grep -q '^OK$' verification/p2_1c2d4b/db-owner-read-regression.txt
+          grep -q 'P2_1C2D4A_PRIVATE_OWNER_READ_SUITE_SAT' verification/p2_1c2d4b/db-owner-read-regression.txt
+          grep -q 'CLEAN_PRIVATE_OWNER_READ_DATABASE' verification/p2_1c2d4b/db-owner-read-regression.txt
+      - name: Signed backend PRIVATE owner-read adapter integration
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/p2_1c2d4b/private_owner_read_adapter.py \
+            backend/p2_1c2d4b/test_private_owner_read_adapter.py
+          python backend/p2_1c2d4b/test_private_owner_read_adapter.py \
+            2>&1 | tee verification/p2_1c2d4b/private-owner-read-adapter.txt
+          grep -q 'Ran 14 tests' verification/p2_1c2d4b/private-owner-read-adapter.txt
+          grep -q '^OK$' verification/p2_1c2d4b/private-owner-read-adapter.txt
+          grep -q 'P2_1C2D4B_PRIVATE_OWNER_READ_ADAPTER_SUITE_SAT' verification/p2_1c2d4b/private-owner-read-adapter.txt
+          grep -q 'CLEAN_PRIVATE_OWNER_READ_ADAPTER_DATABASE' verification/p2_1c2d4b/private-owner-read-adapter.txt
+      - name: Retain actual gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4b-private-owner-read-adapter-evidence
+          path: verification/p2_1c2d4b/
+          if-no-files-found: warn
