@@ -219,6 +219,10 @@ class JwksTlsDialerTests(unittest.TestCase):
         with self.assertRaisesRegex(TlsDialError, "JWKS_TLS_TARGET_INVALID"):
             open_pinned_tls_connection(target(addresses=("10.0.0.1",)))
 
+    def test_malformed_port_in_fabricated_target_is_rejected(self):
+        with self.assertRaisesRegex(TlsDialError, "JWKS_TLS_TARGET_INVALID"):
+            open_pinned_tls_connection(target(url="https://auth.example.com:notaport/jwks"))
+
     def test_environment_proxy_permission_is_rejected(self):
         with patch.dict(os.environ, {"HTTPS_PROXY": "http://127.0.0.1:9999"}):
             with self.assertRaisesRegex(TlsDialError, "JWKS_TLS_TARGET_INVALID"):
