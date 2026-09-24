@@ -13,6 +13,7 @@ SERVICE = 'echo_principal_provision_service'
 RUNTIME = 'echo_principal_provision_runtime'
 GUARD = 'echo_principal_provision_guard'
 FUNCTION = 'echo_identity.runtime_provision_signed_principal(uuid,text,text,bigint,bigint,bigint)'
+_TEST_DATABASES = frozenset({'echo_account_link_signed_test', 'echo_first_session_test'})
 
 
 class PrincipalPoolError(Exception):
@@ -31,7 +32,7 @@ class PrincipalPool:
                 or type(max_size) is not int or not 1 <= max_size <= 4):
             raise PrincipalPoolError('INVALID_SERVICE_CONFIG')
         insecure = (allow_insecure_test_loopback is True and host == '127.0.0.1'
-                    and dbname == 'echo_account_link_signed_test')
+                    and dbname in _TEST_DATABASES)
         if sslmode != 'verify-full' and not (insecure and sslmode == 'disable'):
             raise PrincipalPoolError('VERIFIED_TLS_REQUIRED')
         self._dbname = dbname
