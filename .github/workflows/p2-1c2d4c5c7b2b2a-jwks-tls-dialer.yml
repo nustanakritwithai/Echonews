@@ -1,0 +1,85 @@
+name: P2.1c.2d.4c.5c.7b.2b.2a JWKS TLS Dialer Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b2a/**'
+      - 'backend/p2_1c2d4c5c7b2b1/**'
+      - 'backend/p2_1c2d4c5c7b2b2a/**'
+      - '.github/workflows/p2-1c2d4c5c7b2b2a-jwks-tls-dialer.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b2a/**'
+      - 'backend/p2_1c2d4c5c7b2b1/**'
+      - 'backend/p2_1c2d4c5c7b2b2a/**'
+      - '.github/workflows/p2-1c2d4c5c7b2b2a-jwks-tls-dialer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jwks-tls-dialer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Record source and runtime
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2d4c5c7b2b2a
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c7b2b2a/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c7b2b2a/python.txt
+          sha256sum \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7b2a/jwks_https_transport_contract.py \
+            backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py \
+            backend/p2_1c2d4c5c7b2b1/jwks_egress_guard.py \
+            backend/p2_1c2d4c5c7b2b1/test_jwks_egress_guard.py \
+            backend/p2_1c2d4c5c7b2b2a/README_TH.md \
+            backend/p2_1c2d4c5c7b2b2a/jwks_tls_dialer.py \
+            backend/p2_1c2d4c5c7b2b2a/test_jwks_tls_dialer.py \
+            | tee verification/p2_1c2d4c5c7b2b2a/source-sha256.txt
+      - name: Execute inherited and TLS dialer contracts
+        env:
+          PYTHONPATH: backend/p2_1c2d4c5c7a:backend/p2_1c2d4c5c7b2a:backend/p2_1c2d4c5c7b2b1:backend/p2_1c2d4c5c7b2b2a
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7b2a/jwks_https_transport_contract.py \
+            backend/p2_1c2d4c5c7b2b1/jwks_egress_guard.py \
+            backend/p2_1c2d4c5c7b2b2a/jwks_tls_dialer.py \
+            backend/p2_1c2d4c5c7b2b2a/test_jwks_tls_dialer.py
+          python backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b2b2a/trust-contract-tests.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d4c5c7b2b2a/trust-contract-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b2a/trust-contract-tests.txt
+          python backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b2b2a/http-envelope-tests.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c7b2b2a/http-envelope-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b2a/http-envelope-tests.txt
+          python backend/p2_1c2d4c5c7b2b1/test_jwks_egress_guard.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b2b2a/egress-guard-tests.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c7b2b2a/egress-guard-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b2a/egress-guard-tests.txt
+          python backend/p2_1c2d4c5c7b2b2a/test_jwks_tls_dialer.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
+          grep -q 'Ran 15 tests' verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b2a/tls-dialer-tests.txt
+      - name: Retain TLS dialer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c7b2b2a-jwks-tls-dialer-evidence
+          path: verification/p2_1c2d4c5c7b2b2a/
+          if-no-files-found: warn
