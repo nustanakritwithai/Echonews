@@ -1,0 +1,83 @@
+name: P2.1c.2d.4c.5c.7b.1 JWKS Boundary Bridge Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2b1/identity_boundary.py'
+      - 'backend/p2_1c2b1/requirements.txt'
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b1/**'
+      - '.github/workflows/p2-1c2d4c5c7b1-jwks-boundary-bridge.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2b1/identity_boundary.py'
+      - 'backend/p2_1c2b1/requirements.txt'
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b1/**'
+      - '.github/workflows/p2-1c2d4c5c7b1-jwks-boundary-bridge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jwks-boundary-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned identity runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r backend/p2_1c2b1/requirements.txt
+      - name: Record source and runtime
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2d4c5c7b1
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c7b1/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c7b1/python.txt
+          python - <<'PY' | tee verification/p2_1c2d4c5c7b1/runtime.txt
+          import cryptography, jwt
+          print('cryptography', cryptography.__version__)
+          print('PyJWT', jwt.__version__)
+          PY
+          sha256sum \
+            backend/p2_1c2b1/identity_boundary.py \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7b1/README_TH.md \
+            backend/p2_1c2d4c5c7b1/jwks_boundary_bridge.py \
+            backend/p2_1c2d4c5c7b1/test_jwks_boundary_bridge.py \
+            | tee verification/p2_1c2d4c5c7b1/source-sha256.txt
+      - name: Execute trust contract and boundary bridge
+        env:
+          PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2d4c5c7a:backend/p2_1c2d4c5c7b1
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2b1/identity_boundary.py \
+            backend/p2_1c2d4c5c7a/jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            backend/p2_1c2d4c5c7b1/jwks_boundary_bridge.py \
+            backend/p2_1c2d4c5c7b1/test_jwks_boundary_bridge.py
+          python backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b1/trust-contract-tests.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d4c5c7b1/trust-contract-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b1/trust-contract-tests.txt
+          python backend/p2_1c2d4c5c7b1/test_jwks_boundary_bridge.py \
+            2>&1 | tee verification/p2_1c2d4c5c7b1/bridge-tests.txt
+          grep -q 'Ran 10 tests' verification/p2_1c2d4c5c7b1/bridge-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b1/bridge-tests.txt
+      - name: Retain bridge evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c7b1-jwks-boundary-bridge-evidence
+          path: verification/p2_1c2d4c5c7b1/
+          if-no-files-found: warn
