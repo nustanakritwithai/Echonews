@@ -1,0 +1,87 @@
+name: P2.1c.2d.4c.5c.4 Signed Logout Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d4c5c4/**', 'backend/p2_1c2d4c5c3/**', 'backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/**', '.github/workflows/p2-1c2d4c5c4-signed-logout.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d4c5c4/**', 'backend/p2_1c2d4c5c3/**', 'backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'backend/p2_1c2c3/**', 'database/**', '.github/workflows/p2-1c2d4c5c4-signed-logout.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-logout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_first_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_first_session_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_first_session_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d4c5b:backend/p2_1c2d4c5c3:backend/p2_1c2d4c5c4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare runtime and source evidence
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/signed-logout
+          git rev-parse HEAD | tee verification/signed-logout/checkout-sha.txt
+          python --version | tee verification/signed-logout/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/signed-logout/postgres.txt
+          git ls-files -z backend database .github/workflows/p2-1c2d4c5c4-signed-logout.yml | xargs -0 sha256sum > verification/signed-logout/source-sha256.txt
+          python -m py_compile backend/p2_1c2d4c5c4/*.py
+      - name: Original signed-token regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/signed-logout/token-results python backend/p2_1c2b1/run_checks.py 2>&1 | tee verification/signed-logout/token.txt
+      - name: Install isolated first-session and logout chain
+        run: |
+          set -euo pipefail
+          test "$(psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL")" = t
+          for f in database/p2_1b/schema.sql database/p2_1c2c/001_identity_registry.sql database/p2_1c2d4c3/001_registry_service.sql database/p2_1c2d4c4/001_identity_mutation_service.sql database/p2_1c2d4c5a/001_account_link_proof.sql database/p2_1c2d4c5b/001_signed_account_link_service.sql database/p2_1c2d4c5c1/001_signed_principal_service.sql database/p2_1c2d4c5c2/001_activation_contract.sql database/p2_1c2d4c5c3/001_first_session_bootstrap.sql database/p2_1c2d4c5c4/001_current_session_logout.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: Real signed logout plus unchanged bootstrap cases
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5c4/test_signed_logout.py 2>&1 | tee verification/signed-logout/tests.txt
+          grep -q 'Ran 45 tests' verification/signed-logout/tests.txt
+          grep -q '^OK$' verification/signed-logout/tests.txt
+          test "$(grep -c 'LOGOUT_LOCK_OBSERVED' verification/signed-logout/tests.txt)" = 5
+          grep -q 'CLEAN_SIGNED_LOGOUT_DATABASE' verification/signed-logout/tests.txt
+      - name: Independent catalog cleanup assertion
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_session_logout_service') IS NULL AND to_regrole('echo_session_logout_runtime') IS NULL AND to_regrole('echo_session_logout_guard') IS NULL" | tee verification/signed-logout/cleanup.txt
+          grep -qx t verification/signed-logout/cleanup.txt
+      - name: Retain runtime evidence and exact source archive
+        if: always()
+        run: |
+          git archive --format=tar HEAD backend/p2_1c2d4c5c4 database/p2_1c2d4c5c4 .github/workflows/p2-1c2d4c5c4-signed-logout.yml > verification/signed-logout/scoped-source.tar
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signed-logout-evidence
+          path: verification/signed-logout/
+          if-no-files-found: warn
