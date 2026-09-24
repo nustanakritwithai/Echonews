@@ -1,0 +1,118 @@
+name: P2.1c.2d.4c.5c.3 Signed First Session Gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c3/**'
+      - 'database/p2_1c2d4c5c3/**'
+      - '.github/workflows/p2-1c2d4c5c3-first-session.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c3/**'
+      - 'database/p2_1c2d4c5c3/**'
+      - '.github/workflows/p2-1c2d4c5c3-first-session.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed-first-session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_first_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_first_session_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_first_session_test
+      ECHO_DISPOSABLE_PG: 'YES'
+      PYTHONPATH: backend/p2_1c2b1:backend/p2_1c2c3:backend/p2_1c2d4c5b:backend/p2_1c2d4c5c3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies and capture exact runtime
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5c3/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/p2_1c2d4c5c3
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c3/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c3/python.txt
+          python - <<'PY' | tee verification/p2_1c2d4c5c3/python-packages.txt
+          import psycopg, psycopg_pool, jwt
+          print('psycopg', psycopg.__version__)
+          print('psycopg_pool', psycopg_pool.__version__)
+          print('pyjwt', jwt.__version__)
+          PY
+          psql -X -Atc 'SELECT version();' | tee verification/p2_1c2d4c5c3/postgres.txt
+          sha256sum \
+            database/p2_1c2d4c5c3/001_first_session_bootstrap.sql \
+            backend/p2_1c2d4c5c3/first_session_boundary.py \
+            backend/p2_1c2d4c5c3/first_session_pool.py \
+            backend/p2_1c2d4c5c3/test_signed_first_session.py \
+            backend/p2_1c2d4c5c3/README_TH.md \
+            .github/workflows/p2-1c2d4c5c3-first-session.yml \
+            | tee verification/p2_1c2d4c5c3/source-sha256.txt
+      - name: Preserve strict signed-token parser regression
+        run: |
+          set -euo pipefail
+          ECHO_IDENTITY_RESULTS=verification/p2_1c2d4c5c3/token-regression \
+            python backend/p2_1c2b1/run_checks.py \
+            2>&1 | tee verification/p2_1c2d4c5c3/token-regression.txt
+      - name: Install isolated first-session dependency chain
+        run: |
+          set -euo pipefail
+          for f in \
+            database/p2_1b/schema.sql \
+            database/p2_1c2c/001_identity_registry.sql \
+            database/p2_1c2d4c3/001_registry_service.sql \
+            database/p2_1c2d4c4/001_identity_mutation_service.sql \
+            database/p2_1c2d4c5a/001_account_link_proof.sql \
+            database/p2_1c2d4c5b/001_signed_account_link_service.sql \
+            database/p2_1c2d4c5c1/001_signed_principal_service.sql \
+            database/p2_1c2d4c5c2/001_activation_contract.sql \
+            database/p2_1c2d4c5c3/001_first_session_bootstrap.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: Verify signed first-session bootstrap and pool
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            backend/p2_1c2d4c5c3/first_session_boundary.py \
+            backend/p2_1c2d4c5c3/first_session_pool.py \
+            backend/p2_1c2d4c5c3/test_signed_first_session.py
+          python -m unittest -v backend/p2_1c2d4c5c3/test_signed_first_session.py \
+            2>&1 | tee verification/p2_1c2d4c5c3/first-session.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c3/first-session.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c3/first-session.txt
+          grep -q 'CLEAN_FIRST_SESSION_DATABASE' verification/p2_1c2d4c5c3/first-session.txt
+          echo P2_1C2D4C5C3_FIRST_SESSION_SUITE_SAT | tee verification/p2_1c2d4c5c3/SAT.txt
+      - name: Independent cleanup assertion
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_first_session_service') IS NULL" \
+            | tee verification/p2_1c2d4c5c3/cleanup.txt
+          grep -qx t verification/p2_1c2d4c5c3/cleanup.txt
+      - name: Retain actual runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c3-first-session-evidence
+          path: verification/p2_1c2d4c5c3/
+          if-no-files-found: warn
