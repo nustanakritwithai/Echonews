@@ -2,7 +2,7 @@
 import hashlib, json, os, pathlib, time, urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BASE = os.environ['PAGE_URL'].rstrip('/') + '/preview/'
-FILES = ['index.html', 'styles.css', 'app.mjs', 'core.mjs', 'data.mjs', 'icon.svg', 'room-v2.mjs', 'room-v2.css']
+FILES = ['index.html', 'styles.css', 'app.mjs', 'core.mjs', 'data.mjs', 'icon.svg', 'room-v2.mjs', 'room-v2.css', 'evidence-inspector.mjs', 'evidence-inspector.css']
 results = []
 for name in FILES:
     expected = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
