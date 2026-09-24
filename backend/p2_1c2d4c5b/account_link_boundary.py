@@ -98,7 +98,11 @@ def _strict_signed_identity(config: Config, authorization: str | None) -> dict:
 
 
 class SignedAccountLinkBoundary:
-    """Issue one short-lived DB proof from a verified bearer subject only."""
+    """Issue one short-lived DB proof from a verified bearer subject only.
+
+    connect_runtime must provide the trusted transaction-owning pool lease.
+    Receipt and final DB time checks occur before leaving that transaction.
+    """
 
     def __init__(self, config: Config, connect_runtime: Callable[[], object]):
         if type(config) is not Config or not callable(connect_runtime):
@@ -129,26 +133,45 @@ class SignedAccountLinkBoundary:
         try:
             with self._connect_runtime() as c:
                 row = c.execute(ISSUE_SQL, params).fetchone()
+                # Keep receipt validation INSIDE the transaction: a contract
+                # violation must roll back the real proof and any new binding.
+                if row is None or len(row) != 1 or type(row[0]) is not dict:
+                    raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
+                value = row[0]
+                if set(value) != {'proofId','issuer','subject','actorId','sourceId','expiresAtMs','consumed'}:
+                    raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
+                try:
+                    returned_proof = UUID(value['proofId'])
+                    actor_id = UUID(value['actorId'])
+                    source_id = UUID(value['sourceId'])
+                except (ValueError, TypeError, AttributeError):
+                    raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION') from None
+                if (returned_proof != proof_id or actor_id.int == 0 or source_id.int == 0
+                        or actor_id == source_id or value['issuer'] != self._config.issuer
+                        or value['subject'] != claims['sub']
+                        or value['expiresAtMs'] != proof_expires_ms
+                        or value['consumed'] is not False):
+                    raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
+
+                # c5a validates at statement entry, before its advisory lock.
+                # Sample the DB wall clock again AFTER that potential wait. The
+                # guarantee is this final check, not physical WAL/ack timing.
+                clock_row = c.execute('SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint').fetchone()
+                if (clock_row is None or len(clock_row) != 1
+                        or type(clock_row[0]) is not int
+                        or not 0 <= clock_row[0] <= _MAX_SAFE_MS):
+                    raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
+                checked_ms = clock_row[0]
+                if (checked_ms < _ms(claims['iat']) or checked_ms < _ms(claims['nbf'])
+                        or checked_ms >= token_exp_ms or checked_ms >= proof_expires_ms):
+                    raise SignedAccountLinkError('IDENTITY_REJECTED')
+                receipt = AccountLinkReceipt(proof_id=proof_id, expires_at_ms=proof_expires_ms)
         except SignedAccountLinkError:
             raise
         except Exception:
+            # Includes unknown commit/reset outcomes. Do not replay automatically
+            # or claim a rollback when commit acknowledgement is unavailable.
             raise SignedAccountLinkError('ACCOUNT_LINK_BACKEND_UNAVAILABLE') from None
 
-        if row is None or len(row) != 1 or type(row[0]) is not dict:
-            raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
-        value = row[0]
-        if set(value) != {'proofId','issuer','subject','actorId','sourceId','expiresAtMs','consumed'}:
-            raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
-        try:
-            returned_proof = UUID(value['proofId'])
-            actor_id = UUID(value['actorId'])
-            source_id = UUID(value['sourceId'])
-        except (ValueError, TypeError, AttributeError):
-            raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION') from None
-        if (returned_proof != proof_id or actor_id.int == 0 or source_id.int == 0
-                or actor_id == source_id or value['issuer'] != self._config.issuer
-                or value['subject'] != claims['sub']
-                or value['expiresAtMs'] != proof_expires_ms
-                or value['consumed'] is not False):
-            raise SignedAccountLinkError('ACCOUNT_LINK_CONTRACT_VIOLATION')
-        return AccountLinkReceipt(proof_id=proof_id, expires_at_ms=proof_expires_ms)
+        # A result is released only after the pool's commit and reset succeed.
+        return receipt
