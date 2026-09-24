@@ -1,5 +1,5 @@
 """UX-P0.2 native served-origin Chromium: inherit all 24 Room V2 cases unchanged.
-Twelve new inspector methods. No offline rendering counted as browser integration.
+Thirteen new inspector methods. No offline rendering counted as browser integration.
 """
 import json
 from pathlib import Path
@@ -144,6 +144,22 @@ class InspectorTests(RoomV2Tests):
         self.page.locator('.bottomnav [data-action=compose]').click()
         self.assertFalse(self.page.locator('#modal').evaluate('el=>el.classList.contains("evidence-inspector")'))
         self.assertTrue(self.page.locator('#voice-form').is_visible())
+
+    def test_37_cross_tab_deletion_closes_stale_local_original(self):
+        self.compose('REMOVE_FROM_OTHER_TAB')
+        self.page.locator('#main [data-action=original]').click();self.stage('source')
+        other=self.context.new_page()
+        try:
+            other.goto(self.url+'#/me')
+            other.locator('#main [data-action=delete]').wait_for()
+            other.on('dialog',lambda d:d.accept())
+            other.locator('#main [data-action=delete]').click()
+            self.page.locator('#modal').wait_for(state='hidden')
+            self.assertFalse(self.page.locator('body').evaluate('el=>el.classList.contains("inspector-open")'))
+            self.assertEqual(self.page.locator('#main .voicecard').count(),0)
+            self.assertNotIn('REMOVE_FROM_OTHER_TAB',self.page.locator('#main').inner_text())
+        finally:
+            other.close()
 
     def test_35_inspector_reopen_and_scroll_does_not_lose_clicks(self):
         for _ in range(3):
