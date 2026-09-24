@@ -12,8 +12,6 @@ from jwks_trust_contract import IssuerTrust, JwksSnapshot, validate_jwks_snapsho
 POLICY = "BOUNDED_ETAG_304_REVALIDATION_V1"
 _MAX_ETAG_CHARS = 200
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
-_STRONG_ETAG_RE = re.compile(r'^"(?:!|[\\x23-\\x7E]){1,200}"$')
-_WEAK_ETAG_RE = re.compile(r'^W/"(?:!|[\\x23-\\x7E]){1,200}"$')
 
 
 class ConditionalFetchError(ValueError):
@@ -63,12 +61,21 @@ def _validate_now(now_ms: int) -> None:
         raise ConditionalFetchError("JWKS_CLOCK_INVALID")
 
 
+def _valid_opaque_tag(value: str) -> bool:
+    if len(value) < 3 or value[0] != '"' or value[-1] != '"':
+        return False
+    opaque = value[1:-1]
+    if not opaque or len(opaque) > _MAX_ETAG_CHARS:
+        return False
+    return all(ch == "!" or 0x23 <= ord(ch) <= 0x7E for ch in opaque)
+
+
 def _etag_kind(value: str) -> str:
-    if type(value) is not str or not value or len(value) > _MAX_ETAG_CHARS + 4:
+    if type(value) is not str or not value:
         return "invalid"
-    if _STRONG_ETAG_RE.fullmatch(value) is not None:
+    if _valid_opaque_tag(value):
         return "strong"
-    if _WEAK_ETAG_RE.fullmatch(value) is not None:
+    if value.startswith("W/") and _valid_opaque_tag(value[2:]):
         return "weak"
     return "invalid"
 
