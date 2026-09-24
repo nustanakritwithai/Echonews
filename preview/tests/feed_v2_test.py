@@ -73,6 +73,8 @@ class FeedV2Tests(InspectorTests):
             counts=c.locator('.feed-state-count b').all_text_contents()
             unknown=c.locator('.feed-unknown .feed-point-text').inner_text()
             c.locator('.cardlink').click()
+            self.page.wait_for_url(self.url+'#/room/'+room)
+            self.page.locator('.state-metric strong').first.wait_for(state='visible')
             self.assertEqual(self.page.locator('.state-metric strong').all_text_contents(),counts)
             self.assertIn(unknown,self.page.locator('.top-unknown').inner_text())
 
