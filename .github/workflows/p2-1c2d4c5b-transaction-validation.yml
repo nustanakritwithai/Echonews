@@ -1,0 +1,83 @@
+name: Account Link Precommit Validation Gate
+on:
+  push:
+    branches: [main]
+    paths: ['backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'database/**', '.github/workflows/p2-1c2d4c5b-transaction-validation.yml']
+  pull_request:
+    paths: ['backend/p2_1c2d4c5b/**', 'backend/p2_1c2b1/**', 'database/**', '.github/workflows/p2-1c2d4c5b-transaction-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  account-link-precommit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: echo_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: echo_account_link_signed_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U echo_test -d echo_account_link_signed_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: echo_test
+      PGPASSWORD: disposable_ci_only
+      PGDATABASE: echo_account_link_signed_test
+      ECHO_DISPOSABLE_PG: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare runtime and source identity
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/p2_1c2d4c5b/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          mkdir -p verification/account-link-precommit
+          git rev-parse HEAD | tee verification/account-link-precommit/checkout-sha.txt
+          python --version | tee verification/account-link-precommit/python.txt
+          psql -X -Atc 'SELECT version();' | tee verification/account-link-precommit/postgres.txt
+          sha256sum backend/p2_1c2d4c5b/*.py database/p2_1c2d4c5a/*.sql database/p2_1c2d4c5b/*.sql > verification/account-link-precommit/source-sha256.txt
+      - name: Install isolated account-link chain
+        run: |
+          set -euo pipefail
+          for f in \
+            database/p2_1b/schema.sql \
+            database/p2_1c2c/001_identity_registry.sql \
+            database/p2_1c2d4c3/001_registry_service.sql \
+            database/p2_1c2d4c4/001_identity_mutation_service.sql \
+            database/p2_1c2d4c5a/001_account_link_proof.sql \
+            database/p2_1c2d4c5b/001_signed_account_link_service.sql; do
+            psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+      - name: Run unchanged service cases and precommit regressions once
+        run: |
+          set -euo pipefail
+          python -m unittest -v backend/p2_1c2d4c5b/test_account_link_transaction.py 2>&1 | tee verification/account-link-precommit/tests.txt
+          grep -q 'Ran 20 tests' verification/account-link-precommit/tests.txt
+          grep -q '^OK$' verification/account-link-precommit/tests.txt
+          grep -q 'ACCOUNT_LINK_EXPIRY_LOCK_WAIT_OBSERVED' verification/account-link-precommit/tests.txt
+          grep -q 'CLEAN_SIGNED_ACCOUNT_LINK_DATABASE' verification/account-link-precommit/tests.txt
+      - name: Verify isolated cleanup independently
+        if: always()
+        run: |
+          set -euo pipefail
+          psql -X -Atc "SELECT to_regnamespace('echo_identity') IS NULL AND to_regnamespace('echo_core') IS NULL AND to_regrole('echo_account_link_service') IS NULL AND to_regrole('echo_account_link_runtime') IS NULL AND to_regrole('echo_account_link_guard') IS NULL" | tee verification/account-link-precommit/cleanup.txt
+          grep -qx t verification/account-link-precommit/cleanup.txt
+      - name: Retain actual runtime results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-link-precommit-evidence
+          path: verification/account-link-precommit/
+          if-no-files-found: warn
