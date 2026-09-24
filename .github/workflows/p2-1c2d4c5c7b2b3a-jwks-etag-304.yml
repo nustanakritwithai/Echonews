@@ -1,0 +1,76 @@
+name: P2.1c.2d.4c.5c.7b.2b.3a JWKS ETag 304 Contract Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b2a/**'
+      - 'backend/p2_1c2d4c5c7b2b1/**'
+      - 'backend/p2_1c2d4c5c7b2b2a/**'
+      - 'backend/p2_1c2d4c5c7b2b2b/**'
+      - 'backend/p2_1c2d4c5c7b2b3a/**'
+      - '.github/workflows/p2-1c2d4c5c7b2b3a-jwks-etag-304.yml'
+  pull_request:
+    paths:
+      - 'backend/p2_1c2d4c5c7a/**'
+      - 'backend/p2_1c2d4c5c7b2a/**'
+      - 'backend/p2_1c2d4c5c7b2b1/**'
+      - 'backend/p2_1c2d4c5c7b2b2a/**'
+      - 'backend/p2_1c2d4c5c7b2b2b/**'
+      - 'backend/p2_1c2d4c5c7b2b3a/**'
+      - '.github/workflows/p2-1c2d4c5c7b2b3a-jwks-etag-304.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jwks-etag-304-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Record source and runtime
+        run: |
+          set -euo pipefail
+          mkdir -p verification/p2_1c2d4c5c7b2b3a
+          git rev-parse HEAD | tee verification/p2_1c2d4c5c7b2b3a/checkout-sha.txt
+          python --version | tee verification/p2_1c2d4c5c7b2b3a/python.txt
+          sha256sum             backend/p2_1c2d4c5c7a/jwks_trust_contract.py             backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py             backend/p2_1c2d4c5c7b2a/jwks_https_transport_contract.py             backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py             backend/p2_1c2d4c5c7b2b1/jwks_egress_guard.py             backend/p2_1c2d4c5c7b2b1/test_jwks_egress_guard.py             backend/p2_1c2d4c5c7b2b2a/jwks_tls_dialer.py             backend/p2_1c2d4c5c7b2b2a/test_jwks_tls_dialer.py             backend/p2_1c2d4c5c7b2b2b/jwks_http_tls_fetch.py             backend/p2_1c2d4c5c7b2b2b/test_jwks_http_tls_fetch.py             backend/p2_1c2d4c5c7b2b3a/README_TH.md             backend/p2_1c2d4c5c7b2b3a/jwks_conditional_fetch_contract.py             backend/p2_1c2d4c5c7b2b3a/test_jwks_conditional_fetch_contract.py             | tee verification/p2_1c2d4c5c7b2b3a/source-sha256.txt
+      - name: Execute inherited and ETag 304 contracts
+        env:
+          PYTHONPATH: backend/p2_1c2d4c5c7a:backend/p2_1c2d4c5c7b2a:backend/p2_1c2d4c5c7b2b1:backend/p2_1c2d4c5c7b2b2a:backend/p2_1c2d4c5c7b2b2b:backend/p2_1c2d4c5c7b2b3a
+        run: |
+          set -euo pipefail
+          python -m py_compile             backend/p2_1c2d4c5c7a/jwks_trust_contract.py             backend/p2_1c2d4c5c7b2a/jwks_https_transport_contract.py             backend/p2_1c2d4c5c7b2b1/jwks_egress_guard.py             backend/p2_1c2d4c5c7b2b2a/jwks_tls_dialer.py             backend/p2_1c2d4c5c7b2b2b/jwks_http_tls_fetch.py             backend/p2_1c2d4c5c7b2b3a/jwks_conditional_fetch_contract.py             backend/p2_1c2d4c5c7b2b3a/test_jwks_conditional_fetch_contract.py
+          python backend/p2_1c2d4c5c7a/test_jwks_trust_contract.py             2>&1 | tee verification/p2_1c2d4c5c7b2b3a/trust-contract-tests.txt
+          grep -q 'Ran 20 tests' verification/p2_1c2d4c5c7b2b3a/trust-contract-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b3a/trust-contract-tests.txt
+          python backend/p2_1c2d4c5c7b2a/test_jwks_https_transport_contract.py             2>&1 | tee verification/p2_1c2d4c5c7b2b3a/http-envelope-tests.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c7b2b3a/http-envelope-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b3a/http-envelope-tests.txt
+          python backend/p2_1c2d4c5c7b2b1/test_jwks_egress_guard.py             2>&1 | tee verification/p2_1c2d4c5c7b2b3a/egress-guard-tests.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c7b2b3a/egress-guard-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b3a/egress-guard-tests.txt
+          python backend/p2_1c2d4c5c7b2b2a/test_jwks_tls_dialer.py             2>&1 | tee verification/p2_1c2d4c5c7b2b3a/tls-dialer-tests.txt
+          grep -q 'Ran 16 tests' verification/p2_1c2d4c5c7b2b3a/tls-dialer-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b3a/tls-dialer-tests.txt
+          python backend/p2_1c2d4c5c7b2b2b/test_jwks_http_tls_fetch.py             2>&1 | tee verification/p2_1c2d4c5c7b2b3a/http-over-tls-tests.txt
+          grep -q 'Ran 18 tests' verification/p2_1c2d4c5c7b2b3a/http-over-tls-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b3a/http-over-tls-tests.txt
+          python backend/p2_1c2d4c5c7b2b3a/test_jwks_conditional_fetch_contract.py             2>&1 | tee verification/p2_1c2d4c5c7b2b3a/etag-304-tests.txt
+          grep -q 'Ran 19 tests' verification/p2_1c2d4c5c7b2b3a/etag-304-tests.txt
+          grep -q '^OK$' verification/p2_1c2d4c5c7b2b3a/etag-304-tests.txt
+      - name: Retain ETag 304 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-1c2d4c5c7b2b3a-jwks-etag-304-evidence
+          path: verification/p2_1c2d4c5c7b2b3a/
+          if-no-files-found: warn
