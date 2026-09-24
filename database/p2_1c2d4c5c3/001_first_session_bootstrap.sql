@@ -33,12 +33,13 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA echo_identity FROM
   echo_first_session_guard,echo_first_session_runtime,echo_first_session_service;
 
 -- The sealed guard can lock one Principal, prove audited activation and insert one
--- Session. The immutable principal_id UPDATE grant exists only because PostgreSQL
--- requires an UPDATE privilege for SELECT ... FOR UPDATE; no function changes it.
+-- Session. Immutable-key UPDATE grants exist only because PostgreSQL requires an
+-- UPDATE privilege for SELECT ... FOR UPDATE; no function changes these keys.
 GRANT USAGE ON SCHEMA echo_identity TO echo_first_session_guard;
 GRANT SELECT ON echo_identity.principals,echo_identity.sessions,echo_identity.activation_audit
   TO echo_first_session_guard;
 GRANT UPDATE (principal_id) ON echo_identity.principals TO echo_first_session_guard;
+GRANT UPDATE (session_key) ON echo_identity.sessions TO echo_first_session_guard;
 GRANT INSERT (session_key,principal_id,auth_version,issued_at,expires_at,revoked)
   ON echo_identity.sessions TO echo_first_session_guard;
 
@@ -76,7 +77,6 @@ BEGIN
     RAISE EXCEPTION 'UNSUPPORTED_FIRST_SESSION_ISOLATION' USING ERRCODE='25001';
   END IF;
 
-  -- Serialize first-session races and authority changes on this Principal.
   SELECT * INTO p FROM echo_identity.principals
    WHERE issuer=p_issuer COLLATE "C" AND subject=p_subject COLLATE "C"
    FOR UPDATE;
@@ -97,8 +97,6 @@ BEGIN
     RAISE EXCEPTION 'FIRST_SESSION_TOKEN_WINDOW_REJECTED' USING ERRCODE='23514';
   END IF;
 
-  -- This is deliberately a FIRST-session gate. Any later durable session needs
-  -- a separate repeat-login/renewal contract.
   IF EXISTS (
     SELECT 1 FROM echo_identity.sessions
      WHERE principal_id=p.principal_id AND session_key<>p_session_key COLLATE "C"
@@ -128,7 +126,6 @@ BEGIN
     SELECT * INTO s FROM echo_identity.sessions WHERE session_key=p_session_key;
   END IF;
 
-  -- Recheck wall clock after any lock wait/DML. Failure rolls back the Session.
   now_ms := floor(extract(epoch FROM clock_timestamp())*1000)::bigint;
   IF now_ms < p_token_issued_ms OR now_ms < p_token_not_before_ms OR now_ms >= p_token_expires_ms THEN
     RAISE EXCEPTION 'FIRST_SESSION_TOKEN_WINDOW_REJECTED' USING ERRCODE='23514';
@@ -152,7 +149,6 @@ GRANT EXECUTE ON FUNCTION echo_identity.runtime_bootstrap_first_session(text,tex
 GRANT echo_first_session_runtime TO echo_first_session_service
   WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
 
--- Close the raw c4 session-create bypass. Revocation remains available there.
 REVOKE EXECUTE ON FUNCTION echo_identity.runtime_create_session(text,uuid,integer,bigint,bigint)
   FROM echo_identity_mutation_runtime,echo_identity_mutation_service;
 
